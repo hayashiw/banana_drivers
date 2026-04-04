@@ -93,9 +93,10 @@ Thumbs.db
 
 # Output directories
 outputs*/
+local/
 
 # Shell scripts
-*.sh
+# *.sh
 
 # Slurm output files
 slurm-*.out

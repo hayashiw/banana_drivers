@@ -1,61 +1,99 @@
 # Banana Drivers
 
-Driver and utility scripts for optimization of **banana coils** in a stellarator–tokamak hybrid device using SIMSOPT.
+Driver and utility scripts for optimization of **banana coils** in a stellarator-tokamak hybrid device using SIMSOPT.
 
-See `../CLAUDE.md` for full technical background and `../PLAN.md` for current status and planned work.
+See `CLAUDE.md` for Claude-specific instructions and design decisions. See `PLAN.md` for current status and planned work.
 
 ---
+
+## Goal
+
+Produce a realizable set of banana coils for a stellarator-tokamak hybrid capable of:
+- **(a)** Pure stellarator scenarios (vacuum field)
+- **(b)** Finite-current scenarios (proxy coil + VF coils)
+
+These coil designs are intended to be manufactured.
+
+---
+
+## Submitting Jobs
+
+All drivers are submitted via `submit.sh`, which handles SLURM queue selection and per-driver settings:
+
+```bash
+./submit.sh 01                       # stage 2 (auto: debug → regular fallback)
+./submit.sh 02 regular               # single-stage (regular queue only)
+./submit.sh 02_singlestage debug     # single-stage (debug queue only)
+```
+
+`run_driver.sh` is the generic SLURM batch script called by `submit.sh`. It finds `${DRIVER}_driver.py`, runs it, and moves logs to the output directory printed by the driver's `atexit` handler (`OUT_DIR=...`).
 
 ## Scripts
 
 ### Pipeline (run in order)
 
-| Script | Purpose | Inputs | Outputs |
-|--------|---------|--------|---------|
-| `vmec_resize_driver.py` | Resize VMEC LCFS to match target plasma dimensions so `s=1` loads the correct surface without ad-hoc rescaling | `wout_nfp22ginsburg_000_014417_iota15.nc` | `outputs_vmec_resize/wout_nfp05iota012_000_000000.nc` |
-| `boozxform_driver.py` | Run Booz_xform on the resized wout to extract a surface already in Boozer coordinates, plus the VMEC equilibrium iota and G | resized wout | `outputs_boozxform/booz_gamma_s100.npz` |
-| `stage2_driver.py` | Stage-2 coil optimization: fixed plasma boundary, optimize banana coil shape to minimize SquaredFlux | resized wout, TF+banana coil parameters | `outputs_stage2/stage2_biotsavart_opt.json`, VTK files |
-| `singlestage_driver.py` | Single-stage optimization: simultaneously optimize coil shapes and plasma boundary for quasi-symmetry (NonQuasiSymmetricRatio) | `stage2_biotsavart_opt.json`, `booz_gamma_s100.npz` | `outputs_singlestage/` |
+| # | Script | Purpose | Inputs | Outputs |
+|---|--------|---------|--------|---------|
+| 01 | `01_stage2_driver.py` | Stage 2: fixed plasma boundary, optimize banana coil shape (SquaredFlux + geometric penalties) | wout, TF+banana coil params | `outputs_stage2/stage2_biotsavart_opt.json` |
+| 02 | `02_singlestage_driver.py` | Single-stage: jointly optimize coil shapes and plasma boundary (BoozerLS + penalties) | stage2 BiotSavart, surface init | `outputs_singlestage/` |
 
-### Utilities
+### Candidate Pipeline Steps (unnumbered)
+
+| Script | Purpose | Status |
+|--------|---------|--------|
+| `boozxform_driver.py` | Run Booz_xform to extract Boozer-coordinate surface + equilibrium iota/G | Will be numbered once pipeline position is confirmed |
+| `vmec_resize_driver.py` | Resize VMEC LCFS to match target plasma dimensions | May be superseded by stage 1 driver |
+
+### Utilities (`utils/`)
 
 | Script | Purpose |
 |--------|---------|
-| `generate_vf_coils.py` | Generate vertical-field coil geometry |
-| `post_process.py` | Post-processing and diagnostics on optimization outputs |
-| `singlestage_finitecurrent_driver.py` | Single-stage with finite plasma current proxy (experimental) |
+| `utils/post_process.py` | Extract physics metrics from optimized BoozerSurface files, append to CSV |
+| `utils/generate_vf_coils.py` | Generate VF coil BiotSavart for finite-current cases → `inputs/vf_biotsavart.json` |
+
+### On Hold (`local/`)
+
+Legacy files, temp-hold drivers, and the master prompt live in `local/`.
 
 ---
 
 ## Key Parameters
 
-### Physical
-- **TF coils**: 20 coils, 80 kA each, `R0=0.976 m`, `R1=0.4 m`, `order=1`
-- **Banana coils**: `nfp=5`, stellsym, wound on winding surface `R0=0.976 m`, `a=0.215 m`, 16 kA each
-- **Target plasma**: `R0=0.925 m`, edge iota ≈ 0.12, `nfp=5`, stellsym
+### Hardware Constraints
+- **TF coils**: 20 coils, 80 kA each, `R0=0.976 m`, `R1=0.4 m`, order=1
+- **Banana coils**: nfp=5, stellsym, wound on winding surface `R0=0.976 m`, `a=0.215 m`, max 16 kA
+- **Banana coil order**: 2 (order=4 produces bad coils)
+- **Banana curvature p-norm**: 4 (L4 produces better coils than L2)
+- **Target plasma**: `R0=0.925 m`, edge iota ~ 0.12, nfp=5, stellsym
 
-### Solver
-- Surface resolution: `MPOL=NTOR=6` (singlestage), fits up to `MPOL=18` planned
-- BoozerSurface: `CONSTRAINT_WEIGHT=None` → BoozerExact Newton
-- Optimizer: L-BFGS-B (`maxcor=300`, `FTOL=1e-15`, `GTOL=1e-3`)
+### Solver (current baseline target)
+- **Boozer method**: BoozerLS (BoozerExact deferred due to Newton initialization issues)
+- **Target resolution**: mpol = ntor = 12 (start at 6-8, ramp up via Fourier continuation)
+- **Convergence**: ftol AND gtol satisfied, Boozer residual < 1e-4
+- **Optimizer**: L-BFGS-B
+- **Coil curve class**: `CurveCWSFourierCPP`
+
+### Objective Function
+- `NonQuasiSymmetricRatio` — quasi-symmetry quality
+- `BoozerResidual` — Boozer coordinate accuracy (with BoozerLS)
+- `Iotas` (QuadraticPenalty) — rotational transform target
+- `CurveLength` (QuadraticPenalty, max) — banana coil length constraint
+- `CurveCurveDistance` — minimum coil-coil separation
+- `CurveSurfaceDistance` — minimum coil-surface separation
+- `LpCurveCurvature` (p=4) — curvature penalty
+- `SurfaceSurfaceDistance` — **excluded** from objective (measured in post-processing only)
 
 ---
 
-## Known Issues (see PLAN.md for fixes)
+## Three-Stage Workflow (Planned)
 
-1. **IOTA_TARGET is wrong** (BLOCKING): `singlestage_driver.py` uses the Booz_xform iota
-   (0.147, VMEC equilibrium) as `IOTA_TARGET`, but the stage2 coils actually produce iota ≈ 0.024
-   in vacuum. The iota penalty dominates the objective and causes BoozerExact to fail on every
-   L-BFGS-B step. Fix: add a stage2 iota probe to `stage2_driver.py` and load the result in
-   `singlestage_driver.py`.
+```
+Stage 1 (VMEC at correct boundary)  -->  booz_xform  -->  Stage 2  -->  Single-stage
+```
 
-2. **BoozerExact fragility** (structural): Unconstrained L-BFGS-B + BoozerExact Newton is
-   fragile — any non-trivial step can break Newton convergence. Fix: port the Augmented
-   Lagrangian Method (ALM) from `proxima_qi` with per-DOF scaling for surface DOFs.
-
-3. **G_init mismatch**: G from Booz_xform ≈ 0.95 T·m reflects VMEC equilibrium field strength;
-   our 80kA TF coils give G ≈ 0.32 T·m. Newton adjusts G during the solve but the 3× gap may
-   slow convergence. Fix: use G from the stage2 iota probe instead.
+- Stage 1: perturbed optimization of existing wout for varying volume/iota targets
+- vmec_resize becomes unnecessary once stage 1 is operational
+- Pareto front scans over banana current, volume, and iota targets
 
 ---
 
@@ -65,5 +103,13 @@ See `../CLAUDE.md` for full technical background and `../PLAN.md` for current st
 |-----------|---------|
 | `outputs_vmec_resize/` | Resized VMEC wout file |
 | `outputs_boozxform/` | Booz_xform `.npz` files with Boozer-coordinate surface data |
-| `outputs_stage2/` | Stage-2 optimized BiotSavart JSON, VTK coil/surface snapshots |
+| `outputs_stage2/` | Stage 2 optimized BiotSavart JSON, VTK coil/surface snapshots |
 | `outputs_singlestage/` | Single-stage optimization outputs, VTK snapshots |
+
+---
+
+## Environment
+
+- **HPC**: Perlmutter @ NERSC (128 CPUs per node, SLURM scheduler)
+- **SIMSOPT fork**: `jhalpern30/simsopt` on `accessibility` branch
+- **Related repo**: `qi_rso/qi_drivers/` (separate project, shared practices only)
