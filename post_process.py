@@ -120,6 +120,7 @@ def process_file(boozersurface_file, n_banana_coils=None, iota_target=0.15, G_si
     Jnonqs = NonQuasiSymmetricRatio(boozersurface, biotsavart)
     Jsqf   = SquaredFlux(surface, biotsavart, definition="normalized")
     # Jforce
+    # TODO: Implement max force objective
     Jl     = CurveLength(banana_curve)
     Jcc    = CurveCurveDistance(banana_curves, CC_THRESHOLD)
     Jccall = CurveCurveDistance(curves, CC_THRESHOLD)

@@ -92,7 +92,7 @@ venv.bak/
 Thumbs.db
 
 # Output directories
-outputs/
+outputs*/
 
 # Shell scripts
 *.sh
@@ -100,3 +100,6 @@ outputs/
 # Slurm output files
 slurm-*.out
 slurm-*.err
+
+# Post process files
+*.csv

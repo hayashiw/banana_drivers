@@ -1,197 +1,155 @@
-
+import atexit
 import numpy as np
 import os
+import re as regex
 import time
 
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta
 from scipy.optimize import minimize
 
-from simsopt.field import BiotSavart, Current, Coil, coils_via_symmetries
+from simsopt.field import (
+    BiotSavart,
+    Coil,
+    Current,
+    coils_via_symmetries,
+)
 from simsopt.field.coil import ScaledCurrent
-from simsopt.geo import (
+from simsopt.geo import(
+    CurveCWSFourierCPP,
     CurveCurveDistance,
     CurveLength,
     LpCurveCurvature,
     SurfaceRZFourier,
     curves_to_vtk,
-    create_equally_spaced_curves
+    create_equally_spaced_curves,
 )
-from simsopt.geo.curve import CurveCWSFourier
-from simsopt.objectives import SquaredFlux, QuadraticPenalty
+from simsopt.objectives import QuadraticPenalty, SquaredFlux
 
-# -------────────────────────────────────────────────────────────────
-# PATHS
-# -------------------------------------------------------------------
-WOUT_FILE = os.path.abspath('inputs/wout_nfp22ginsburg_000_014417_iota15.nc')
+BANANA_CURRENT = 10e3
+BANANA_CURV_P  = 4
+BANANA_NQPTS   = 128
+BANANA_ORDER   = 2
+BANANA_NFP     = 5
 
-OUT_DIR = os.path.abspath('outputs')
-os.makedirs(OUT_DIR, exist_ok=True)
+PHI_0   = 0.06
+PHI_1   = 0.03
+THETA_0 = 0.5
+THETA_1 = 0.1
 
-# -------────────────────────────────────────────────────────────────
-# SURFACE RESOLUTION
-# -------------------------------------------------------------------
+WS_NFP     = BANANA_NFP
+WS_MAJOR_R = 0.976
+WS_MINOR_R = 0.215
+
+NFP  = 5
+STELLSYM = True
+TOL = 1e-15
+
+TF_CURRENT = 100e3
+TF_NUM = 20
+TF_NFP = 1
+TF_STELLSYM = False
+TF_MAJOR_R = 0.976
+TF_MINOR_R = 0.4
+TF_ORDER = 1
+
+print(
+    f"""
+    TF_CURRENT     = {TF_CURRENT/1e3:.0f} kA
+    BANANA_CURRENT = {BANANA_CURRENT/1e3:.0f} kA
+    """
+)
+
 NPHI   = 255
-NTHETA =  64
+NTHETA = 64
+VMEC_S = 0.24
+VMEC_R = 0.925
+WOUT_FILE = os.path.abspath("inputs/wout_nfp22ginsburg_000_014417_iota15.nc")
 
-# -------------------------------------------------------------------
-# OPTIMIZATION PARAMETERS
-# -------------------------------------------------------------------
-MAXITER = 1000
+MAXITER = 500
 MAXCOR  = 300
 MAXFUN  = 10000
 FTOL    = 1e-15
 GTOL    = 1e-6
-print(
-    f"""
-OPTIMIZATION PARAMETERS
-    MAXITER = {MAXITER}
-    MAXCOR  = {MAXCOR}
-    MAXFUN  = {MAXFUN}
-    FTOL    = {FTOL}
-    GTOL    = {GTOL}
-    """
-)
 
-# -------────────────────────────────────────────────────────────────
-# OPTIMIZATION TARGETS AND THRESHOLDS
-# -------------------------------------------------------------------
-LEN_THRESHOLD  = 1.7
-CC_THRESHOLD   = 0.05
-CURV_THRESHOLD = 40
-print(
-    f"""
-OBJECTIVE THRESHOLDS
-    LEN_THRESHOLD  = {LEN_THRESHOLD}
-    CC_THRESHOLD   = {CC_THRESHOLD}
-    CURV_THRESHOLD = {CURV_THRESHOLD}
-    """
-)
+OUT_DIR = os.path.abspath("outputs_example")
+os.makedirs(OUT_DIR, exist_ok=True)
+def _emit_out_dir_on_exit():
+    print(f"STAGE2_OUT_DIR={OUT_DIR}", flush=True)
+atexit.register(_emit_out_dir_on_exit)
 
-# -------────────────────────────────────────────────────────────────
-# OPTIMIZATION WEIGHTS
-# -------------------------------------------------------------------
-LEN_WEIGHT  = 2e-2
-CC_WEIGHT   = 10
-CURV_WEIGHT = 1e-4
-print(
-    f"""
-OBJECTIVE WEIGHTS
-    LEN_WEIGHT  = {LEN_WEIGHT}
-    CC_WEIGHT   = {CC_WEIGHT}
-    CURV_WEIGHT = {CURV_WEIGHT}
-    """
-)
-
-# -------────────────────────────────────────────────────────────────
-# TOROIDAL FIELD COIL PARAMETERS
-# -------------------------------------------------------------------
-TF_MAJ_RAD  = 0.976
-TF_MIN_RAD  = 0.4
-TF_CURRENT  = 80e3
-TF_NUM      = 20
-TF_NFP      = 1
-TF_ORDER    = 1
-TF_STELLSYM = False
-
-# -------────────────────────────────────────────────────────────────
-# BANANA COIL PARAMETERS
-# -------------------------------------------------------------------
-BANANA_PHI_C_0   = 0.06
-BANANA_PHI_C_1   = 0.03
-BANANA_THETA_C_0 = 0.50
-BANANA_THETA_S_1 = 0.10
-BANANA_CURRENT   = 16e3
-BANANA_NQPTS     = 128
-BANANA_NFP       = 5
-BANANA_ORDER     = 2
-BANANA_CURV_P    = 4
-BANANA_STELLSYM  = True
-
-# -------────────────────────────────────────────────────────────────
-# BANANA COIL WINDING SURFACE PARAMETERS
-# -------────────────────────────────────────────────────────────────
-BANANA_MAJ_RAD = 0.976
-BANANA_MIN_RAD = 0.215
-
-# -------────────────────────────────────────────────────────────────
-# VMEC EQUILIBRIUM SURFACE PARAMETERS
-# -------------------------------------------------------------------
-VMEC_R0 = 0.925
-VMEC_S = 0.24
-
-# -------────────────────────────────────────────────────────────────
-# GEOMETRY SETUP
-# -------------------------------------------------------------------
-print("Setting up geometry...")
-
-# Equilibrium surface
-surf = SurfaceRZFourier.from_wout(
-    WOUT_FILE,
-    nphi=NPHI,
-    ntheta=NTHETA,
-    range='full torus',
-    s=VMEC_S
-)
-surf.set_dofs(surf.get_dofs() * VMEC_R0 / surf.major_radius())
-
-# Banana coil winding surface
-winding_surf = SurfaceRZFourier(nfp=BANANA_NFP, stellsym=BANANA_STELLSYM)
-winding_surf.set_rc(0, 0, BANANA_MAJ_RAD)
-winding_surf.set_rc(1, 0, BANANA_MIN_RAD)
-winding_surf.set_zs(1, 0, BANANA_MIN_RAD)
-
-# Toroidal field coils
 tf_curves = create_equally_spaced_curves(
     TF_NUM,
     TF_NFP,
-    TF_STELLSYM,
-    R0=TF_MAJ_RAD,
-    R1=TF_MIN_RAD,
-    order=TF_ORDER
+    stellsym=TF_STELLSYM,
+    R0=TF_MAJOR_R,
+    R1=TF_MINOR_R,
+    order=TF_ORDER,
 )
 tf_currents = [ScaledCurrent(Current(1), TF_CURRENT) for _ in tf_curves]
 for curve in tf_curves: curve.fix_all()
 for current in tf_currents: current.fix_all()
 tf_coils = [Coil(curve, current) for curve, current in zip(tf_curves, tf_currents)]
 
-# Banana coils
-banana_curve = CurveCWSFourier(BANANA_NQPTS, BANANA_ORDER, winding_surf)
-banana_curve.set('phic(0)', BANANA_PHI_C_0)
-banana_curve.set('phic(1)', BANANA_PHI_C_1)
-banana_curve.set('thetac(0)', BANANA_THETA_C_0)
-banana_curve.set('thetas(1)', BANANA_THETA_S_1)
+surface = SurfaceRZFourier.from_wout(
+    WOUT_FILE,
+    range="full torus",
+    nphi=NPHI,
+    ntheta=NTHETA,
+    s=VMEC_S,
+)
+surface.set_dofs(surface.get_dofs() * VMEC_R / surface.major_radius())
+
+winding_surface = SurfaceRZFourier(nfp=WS_NFP, stellsym=STELLSYM)
+winding_surface.set_rc(0, 0, WS_MAJOR_R)
+winding_surface.set_rc(1, 0, WS_MINOR_R)
+winding_surface.set_zs(1, 0, WS_MINOR_R)
+
+banana_qpts = np.linspace(0, 1, BANANA_NQPTS)
+banana_curve = CurveCWSFourierCPP(banana_qpts, order=BANANA_ORDER, surf=winding_surface)
+banana_curve.set('phic(0)', PHI_0)
+banana_curve.set('phic(1)', PHI_1)
+banana_curve.set('thetac(0)', THETA_0)
+banana_curve.set('thetas(1)', THETA_1)
+
 banana_current = ScaledCurrent(Current(1), BANANA_CURRENT)
-banana_current.fix_all()
 banana_coils = coils_via_symmetries(
     [banana_curve],
     [banana_current],
-    BANANA_NFP,
-    BANANA_STELLSYM
+    WS_NFP,
+    STELLSYM,
 )
-# Collect coils
+
 coils = tf_coils + banana_coils
 curves = [coil.curve for coil in coils]
 biotsavart = BiotSavart(coils)
-biotsavart.set_points(surf.gamma().reshape((-1, 3)))
-extra_data = {"<B.N>": np.sum(biotsavart.B().reshape(surf.gamma().shape) * surf.unitnormal(), axis=-1)[..., None]}
-surf.to_vtk(os.path.join(OUT_DIR, 'stage2_surf_init'), extra_data=extra_data)
+biotsavart.set_points(surface.gamma().reshape((-1, 3)))
+extra_data = {"<B.N>": np.sum(biotsavart.B().reshape(surface.gamma().shape) * surface.unitnormal(), axis=-1)[..., None]}
+surface.to_vtk(os.path.join(OUT_DIR, 'stage2_surf_init'), extra_data=extra_data)
 curves_to_vtk(curves, os.path.join(OUT_DIR, 'stage2_curves_init'), close=True)
 biotsavart.save(os.path.join(OUT_DIR, 'stage2_biotsavart_init.json'))
 
-# -------────────────────────────────────────────────────────────────
-# OPTIMIZATION SETUP
-# -------------------------------------------------------------------
-Jsqf  = SquaredFlux(surf, biotsavart)
-Jl    = QuadraticPenalty(CurveLength(banana_curve), LEN_THRESHOLD, "max")
+LENGTH_THRESHOLD = 1.75
+CC_THRESHOLD     = 0.05
+CURV_THRESHOLD   = 40
+
+LEN_WEIGHT = 5e-4
+CC_WEIGHT     = 1e+2
+CURV_WEIGHT   = 1e-4
+
+Jsqf  = SquaredFlux(surface, biotsavart)
+_Jl   = CurveLength(banana_curve)
+Jl    = QuadraticPenalty(_Jl, LENGTH_THRESHOLD, "max")
 Jcc   = CurveCurveDistance(curves, CC_THRESHOLD)
 Jcurv = LpCurveCurvature(banana_curve, BANANA_CURV_P, CURV_THRESHOLD)
 
-JF = (
-    Jsqf
-    + LEN_WEIGHT * Jl
-    + CC_WEIGHT * Jcc
-    + CURV_WEIGHT * Jcurv
-)
+objectives = [
+    (1          , Jsqf ),
+    (LEN_WEIGHT , Jl   ),
+    (CC_WEIGHT  , Jcc  ),
+    (CURV_WEIGHT, Jcurv),
+]
+
+JF = sum(weight * objective for weight, objective in objectives)
 
 track = dict(
     eval=0,
@@ -228,7 +186,7 @@ def callback(dofs):
     coil_curv   = banana_curve.kappa().max()
     cc_dist     = Jcc.shortest_distance()
     Bdotn = np.mean(np.abs(np.sum(
-        biotsavart.B().reshape(surf.gamma().shape) * surf.unitnormal(),
+        biotsavart.B().reshape(surface.gamma().shape) * surface.unitnormal(),
         axis=-1
     )))
 
@@ -262,9 +220,6 @@ def callback(dofs):
     track['eval'] = 0
     track['iter'] = i_iter + 1
 
-# -------────────────────────────────────────────────────────────────
-# RUN OPTIMIZATION
-# -------------------------------------------------------------------
 start_date = datetime.now()
 start_time = time.time()
 print(f"[{start_date}] Starting optimization...")
@@ -281,15 +236,13 @@ res = minimize(
     x0,
     jac=True,
     method='L-BFGS-B',
-    tol=FTOL,
+    tol=TOL,
     options=options,
     callback=callback
 )
 end_date = datetime.now()
 end_time = time.time()
 runtime = end_time - start_time
-
-import re as _re
 
 grad_inf    = np.linalg.norm(JF.dJ(), ord=np.inf)
 EPSMCH      = np.finfo(float).eps
@@ -307,13 +260,14 @@ else:
 hit_maxiter = res.nit >= MAXITER
 hit_maxfun  = res.nfev >= MAXFUN
 hit_gtol    = grad_inf <= GTOL
-hit_ftol    = bool(_re.search(r'REL[_\s]REDUCTION[_\s]OF[_\s]F|RELATIVE\s+REDUCTION\s+OF\s+F', res.message, _re.IGNORECASE))
+hit_ftol    = bool(regex.search(r'REL[_\s]REDUCTION[_\s]OF[_\s]F|RELATIVE\s+REDUCTION\s+OF\s+F', res.message, regex.IGNORECASE))
 print(
     f"""
 [{end_date}] ...optimization complete
 Total runtime: {timedelta(seconds=runtime)}
 
 TERMINATION
+    Banana coil current : {banana_current.get_value()/1e3:.5f} kA
     scipy message  : {res.message}
     success        : {res.success}
     iterations     : {res.nit} / {MAXITER}  (maxiter {'REACHED' if hit_maxiter else 'not reached'})
@@ -326,13 +280,10 @@ TERMINATION
     """
 )
 
-# -----------------──────────────────────────────────────────────────
-# SAVE RESULTS
-# -------------------------------------------------------------------
-biotsavart.set_points(surf.gamma().reshape((-1, 3)))
+biotsavart.set_points(surface.gamma().reshape((-1, 3)))
 extra_data = {
-    "<B.N>": np.sum(biotsavart.B().reshape(surf.gamma().shape) * surf.unitnormal(), axis=-1)[..., None]
+    "<B.N>": np.sum(biotsavart.B().reshape(surface.gamma().shape) * surface.unitnormal(), axis=-1)[..., None]
 }
-surf.to_vtk(os.path.join(OUT_DIR, 'stage2_surf_opt'), extra_data=extra_data)
+surface.to_vtk(os.path.join(OUT_DIR, 'stage2_surf_opt'), extra_data=extra_data)
 curves_to_vtk(curves, os.path.join(OUT_DIR, 'stage2_curves_opt'), close=True)
 biotsavart.save(os.path.join(OUT_DIR, 'stage2_biotsavart_opt.json'))
