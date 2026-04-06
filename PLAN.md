@@ -1,10 +1,10 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-04
+Last updated: 2026-04-06
 
 ## Current Status
 
-**Phase: Pre-baseline (blocked on SIMSOPT).** Stage 2 driver is ready but `CurveCWSFourierCPP` crashes at instantiation — it calls `surf.gammadash1_lin()` which does not exist on `SurfaceRZFourier`. This is a missing method in the banana SIMSOPT fork (`whjh/auglag_banana` branch). Options: (a) implement `gammadash1_lin` on the surface class, or (b) fall back to the Python `CurveCWSFourier` (JAX-based, slower). Must resolve before any stage 2 run can succeed.
+**Phase: Pre-baseline (ready to run).** CurveCWSFourierCPP pybind11 bug fixed (missing `register_common_surface_methods` calls for surface subclasses). Output directories unified to `./outputs` matching qi_drivers. Stage 2 ready for resubmit.
 
 Prior status: Key discrepancies between drivers and source examples (constraint_weight, ntor, tolerances) have been corrected. Foundational design decisions documented in CLAUDE.md.
 
@@ -15,10 +15,10 @@ Prior status: Key discrepancies between drivers and source examples (constraint_
 ### Steps
 
 1. [x] **Confirm BoozerLS + tune parameters** — Driver already used BoozerLS (constraint_weight=1.0). Increased to 100.0 (matches SIMSOPT examples), reduced ntor 8→6, relaxed GTOL 1e-6→1e-2, FTOL 1e-15→1e-5.
-2. [ ] **Resolve CurveCWSFourierCPP crash** — CPP version calls `surf.gammadash1_lin()` which is missing from `SurfaceRZFourier`. Options: (a) add `gammadash1_lin` to surface class in banana SIMSOPT fork, or (b) fall back to Python `CurveCWSFourier` (JAX-based). **Blocks all stage 2 runs.**
+2. [x] **Fix CurveCWSFourierCPP pybind11 bindings** — `*_lin` methods existed in C++ but were only registered on base `PySurface`, not subclasses. Added `register_common_surface_methods` for `PySurfaceRZFourier`, `PySurfaceXYZFourier`, `PySurfaceXYZTensorFourier` in `python_surfaces.cpp`.
 3. [x] **Standardize driver output formatting** — Both drivers rewritten to match qi_drivers patterns: proc0_print, INPUT PARAMETERS / INITIAL STATE / FINAL STATE blocks, SUCCESS/FAILURE termination banner, diagnostics CSV file, section separators.
 4. [x] **Organize project structure** — Numbered pipeline drivers (01_, 02_), submit.sh + run_driver.sh (matching qi_drivers), utils/ for post_process and generate_vf_coils, legacy files in local/.
-5. [ ] **Validate stage 2 convergence** — Blocked on step 2. Once CurveCWSFourierCPP crash is resolved, resubmit and check outputs in outputs_stage2/.
+5. [ ] **Validate stage 2 convergence** — Resubmit and check outputs in outputs/.
 6. [ ] **Run single-stage at source parameters** — Confirm convergence at 100 kA / 10 kA with tuned BoozerLS first.
 7. [ ] **Run single-stage at hardware parameters** — Test 80 kA TF with banana current at 10 kA (or other Pareto scan values).
 8. [ ] **Establish success criteria** — Boozer residual < 1e-4, both ftol and gtol satisfied, physically reasonable coil geometry.
@@ -45,8 +45,7 @@ Once baseline converges at single resolution:
 
 ## TODO (Next Session)
 
-- [ ] **Audit output directory handling** — Check how output directories are created and managed (mkdir, naming, timestamping, plot notebooks) and ensure consistency with qi_drivers/ project patterns.
-- [ ] **Resolve CurveCWSFourierCPP blocker** — `gammadash1_lin` missing from `SurfaceRZFourier`. Implement in banana SIMSOPT fork or fall back to Python `CurveCWSFourier`.
+- [ ] **Validate stage 2** — Resubmit `./submit.sh 01` and check convergence in `outputs/`.
 
 ## Deferred
 

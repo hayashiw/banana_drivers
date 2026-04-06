@@ -32,6 +32,7 @@ banana_drivers/
   boozxform_driver.py                # Booz_xform surface extraction (candidate pipeline step)
   vmec_resize_driver.py              # VMEC resize utility (candidate pipeline step or superseded)
   inputs/                            # Input files (wout, coil data)
+  outputs/                           # Shared output directory (all stages, gitignored)
   utils/
     post_process.py                  # Metrics extraction and CSV comparison
     generate_vf_coils.py             # VF coil generation for finite-current

@@ -53,7 +53,7 @@ TARGET_VOLUME = 0.10
 TARGET_IOTA   = 0.15
 
 # Warm-start
-BIOTSAVART_FILE = "outputs_stage2/stage2_biotsavart_opt.json"
+BIOTSAVART_FILE = "outputs/stage2_biotsavart_opt.json"
 
 # Boozer surface
 CONSTRAINT_WEIGHT = 1e2
@@ -103,7 +103,7 @@ GTOL    = 1e-2
 # ──────────────────────────────────────────────────────────────────────────────
 # Output directory and atexit handler
 # ──────────────────────────────────────────────────────────────────────────────
-OUT_DIR = os.path.abspath("outputs_singlestage")
+OUT_DIR = os.path.abspath('./outputs')
 os.makedirs(OUT_DIR, exist_ok=True)
 
 DIAGNOSTICS_FILE = os.path.join(OUT_DIR, 'singlestage_diagnostics.txt')

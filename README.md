@@ -34,8 +34,8 @@ All drivers are submitted via `submit.sh`, which handles SLURM queue selection a
 
 | # | Script | Purpose | Inputs | Outputs |
 |---|--------|---------|--------|---------|
-| 01 | `01_stage2_driver.py` | Stage 2: fixed plasma boundary, optimize banana coil shape (SquaredFlux + geometric penalties) | wout, TF+banana coil params | `outputs_stage2/stage2_biotsavart_opt.json` |
-| 02 | `02_singlestage_driver.py` | Single-stage: jointly optimize coil shapes and plasma boundary (BoozerLS + penalties) | stage2 BiotSavart, surface init | `outputs_singlestage/` |
+| 01 | `01_stage2_driver.py` | Stage 2: fixed plasma boundary, optimize banana coil shape (SquaredFlux + geometric penalties) | wout, TF+banana coil params | `outputs/stage2_biotsavart_opt.json` |
+| 02 | `02_singlestage_driver.py` | Single-stage: jointly optimize coil shapes and plasma boundary (BoozerLS + penalties) | stage2 BiotSavart, surface init | `outputs/singlestage_*` |
 
 ### Candidate Pipeline Steps (unnumbered)
 
@@ -101,10 +101,7 @@ Stage 1 (VMEC at correct boundary)  -->  booz_xform  -->  Stage 2  -->  Single-s
 
 | Directory | Contents |
 |-----------|---------|
-| `outputs_vmec_resize/` | Resized VMEC wout file |
-| `outputs_boozxform/` | Booz_xform `.npz` files with Boozer-coordinate surface data |
-| `outputs_stage2/` | Stage 2 optimized BiotSavart JSON, VTK coil/surface snapshots |
-| `outputs_singlestage/` | Single-stage optimization outputs, VTK snapshots |
+| `outputs/` | All pipeline outputs: `stage2_*`, `singlestage_*` files (BiotSavart JSON, VTK, diagnostics) |
 
 ---
 

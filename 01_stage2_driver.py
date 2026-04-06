@@ -107,7 +107,7 @@ GTOL    = 1e-6
 # ──────────────────────────────────────────────────────────────────────────────
 # Output directory and atexit handler
 # ──────────────────────────────────────────────────────────────────────────────
-OUT_DIR = os.path.abspath("outputs_stage2")
+OUT_DIR = os.path.abspath('./outputs')
 os.makedirs(OUT_DIR, exist_ok=True)
 
 DIAGNOSTICS_FILE = os.path.join(OUT_DIR, 'stage2_diagnostics.txt')
