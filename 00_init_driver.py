@@ -10,17 +10,21 @@ BoozerSurface object, and saves to inputs/boozersurface.init.json.
 This is analogous to qi_drivers' inputs/boozersurface.stellaris.json — the
 entry point for the warm-start chain:
     00_init → inputs/boozersurface.init.json
-    01_stage2 → outputs/stage2_boozersurface_opt.json
-    02_singlestage → outputs/singlestage_boozersurface_opt.json
+    01_stage2 → <output_dir>/stage2_boozersurface_opt.json
+    02_singlestage → <output_dir>/singlestage_boozersurface_opt.json
 
 Usage:
     python 00_init_driver.py
 """
 import numpy as np
 import os
+import sys
 import yaml
 
 from datetime import datetime
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
+from output_dir import resolve_output_dir
 
 from simsopt.field import (
     BiotSavart,
@@ -257,8 +261,7 @@ boozersurface.save(INIT_BSURF_FILE)
 proc0_print(f'BoozerSurface saved to {INIT_BSURF_FILE}')
 
 # Also save VTK for visualization
-OUT_DIR = os.path.abspath('./outputs')
-os.makedirs(OUT_DIR, exist_ok=True)
+OUT_DIR = resolve_output_dir()
 surface.to_vtk(os.path.join(OUT_DIR, 'init_surf'), extra_data={"B_N": Bdotn_surf[..., None]})
 curves_to_vtk(curves, os.path.join(OUT_DIR, 'init_curves'), close=True)
 proc0_print(f'VTK files saved to {OUT_DIR}')

@@ -45,9 +45,9 @@ Examples:
     ./submit.sh 01 30m                # stage 2, 30min (debug)
     ./submit.sh 01 1h30m              # stage 2, 1h30m (regular)
     ./submit.sh 01_stage2 debug       # stage 2, debug only
-    ./submit.sh poincare outputs/stage2_boozersurface_opt.json
-    ./submit.sh poincare outputs/stage2_boozersurface_opt.json 15m --quick
-    ./submit.sh poincare outputs/singlestage_boozersurface_opt.json regular --tol 1e-9
+    ./submit.sh poincare $SCRATCH/banana_drivers_outputs/stage2_boozersurface_opt.json
+    ./submit.sh poincare $SCRATCH/banana_drivers_outputs/stage2_boozersurface_opt.json 15m --quick
+    ./submit.sh poincare $SCRATCH/banana_drivers_outputs/singlestage_boozersurface_opt.json regular --tol 1e-9
 USAGE
     exit "${1:-0}"
 }

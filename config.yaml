@@ -1,9 +1,10 @@
 # config.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 # Single source of truth for all banana driver scripts:
-#   00_init_driver.py        (coil + surface initialization)
-#   01_stage2_driver.py      (coil-only optimization)
-#   02_singlestage_driver.py (joint coil + surface optimization)
+#   01_stage1_driver.py      (VMEC fixed-boundary optimization)
+#   02_stage2_driver.py      (coil-only optimization)
+#   03_singlestage_driver.py (joint coil + surface optimization)
+#   utils/init_boozersurface.py (coil + surface initialization)
 #
 # Hardware constraint thresholds are fixed physical limits from the device
 # design (coil-coil clearance, max curvature from bending radius, max coil
@@ -12,11 +13,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Warm-start paths ─────────────────────────────────────────────────────────
-# Paths are relative to the banana_drivers/ directory.
+# Input paths are relative to banana_drivers/. Output filenames are resolved
+# against the output directory ($SCRATCH/banana_drivers_outputs/ or ./outputs/).
 warm_start:
-  wout_filepath: "inputs/wout_nfp22ginsburg_000_014417_iota15.nc"
-  init_bsurf_filepath: "inputs/boozersurface.init.json"                 # from 00_init
-  stage2_bsurf_filepath: "outputs/stage2_boozersurface_opt.json"        # from 01_stage2
+  wout_filepath: "inputs/wout_nfp22ginsburg_000_014417_iota15.nc"       # seed wout for 01_stage1 warm start
+  init_bsurf_filepath: "inputs/boozersurface.init.json"                 # from 01_stage1
+  stage1_wout_filename: "stage1_wout_opt.nc"                            # from 01_stage1 (resolved against output dir)
+  stage2_bsurf_filename: "stage2_boozersurface_opt.json"                # from 02_stage2 (resolved against output dir)
 
 # ── Device geometry ──────────────────────────────────────────────────────────
 device:
@@ -61,6 +64,36 @@ plasma_surface:
   ntheta: 64
   vmec_s: 0.24    # Flux surface label
   vmec_R: 0.925   # Target major radius (m)
+
+# ── Stage 1 (VMEC fixed-boundary optimization) ──────────────────────────────
+stage1:
+  cold_start: false                    # true = build boundary from scratch; false = load wout
+
+  # Resolution ramp: each entry is one optimization step
+  max_mode_steps: [1, 2, 3]           # Boundary Fourier modes freed at each step
+  vmec_mpol: [3, 4, 5]               # VMEC mpol at each step
+  vmec_ntor: [3, 4, 5]               # VMEC ntor at each step
+  boozer_mpol: [16, 24, 32]          # booz_xform mpol at each step
+  boozer_ntor: [16, 24, 32]          # booz_xform ntor at each step
+  max_nfev: [50, 50, 50]             # Max function evaluations per step
+
+  # QA target (M=1, N=0)
+  qs_surfaces: [0.25, 0.5, 0.75]     # Flux surfaces for QS targeting
+
+  # Physics targets (overridable via BANANA_IOTA, BANANA_VOLUME env vars)
+  iota_target: 0.15
+  aspect_target: 6.45
+  volume_target: 0.5767               # m^3 (from seed wout)
+
+  # Objective weights
+  aspect_weight: 1.0
+  iota_weight: 1.0
+  qs_weight: 1.0
+
+  # Cold start boundary shape (only used when cold_start=true)
+  cold_start_R0: 1.0667              # Major radius (m)
+  cold_start_a: 0.1655               # Minor radius (m)
+  cold_start_phiedge: 0.083          # Total toroidal flux (Wb)
 
 # ── Boozer surface (singlestage) ────────────────────────────────────────────
 boozer:

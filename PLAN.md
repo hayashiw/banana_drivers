@@ -1,10 +1,20 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-06
+Last updated: 2026-04-07
 
 ## Current Status
 
-**Phase: Warm-start chain validated, ready for singlestage.** config.yaml created as single source of truth. Stage 2 converged (job 51108936/51121626, banana current hit 16 kA bound). Warm-start chain refactored to match qi_drivers pattern: `00_init` → `01_stage2` → `02_singlestage`, with BoozerSurface JSON as the interchange format between stages. Surface domain bug fixed (2026-04-06): all drivers now use `range="field period"` for correct quadpoints. Poincare tracing simplified: no Boozer solve for overlay, raw surface for starting points.
+**Phase: Implementing three-stage pipeline (stage 1 VMEC optimization in progress).**
+
+BoozerLS initialization diagnosed as a **wrong-basin problem** — diagnostic sweep (job 51175067) confirmed BoozerLS converges to iota~0.002 regardless of iota_init (0.15, 0.05, 0.01), with `success=True` and `||grad||=0`. The solver finds a valid least-squares minimum, just the wrong one. No parameter tuning will fix this.
+
+**Solution: Add stage 1 VMEC fixed-boundary optimization** to produce a self-consistent QA equilibrium before coil optimization. Pipeline becomes:
+```
+01_stage1 (VMEC QA opt) → 02_stage2 (coil opt) → 03_singlestage (joint opt)
+```
+Implementation in progress — `utils/init_boozersurface.py` and `config.yaml` stage1 section complete; `01_stage1_driver.py` and driver renumbering pending.
+
+Stage 2 converged (job 51108936/51121626, banana current hit 16 kA bound). Output routing to `$SCRATCH/banana_drivers_outputs/` complete with archive.sh for preservation.
 
 ## Immediate Priority: Baseline at Single Resolution
 
@@ -21,6 +31,9 @@ Last updated: 2026-04-06
 5b. [x] **Add projected gradient norm** — Matches L-BFGS-B's PGTOL check when bounds are active.
 5c. [x] **Create config.yaml** — Single source of truth for both drivers, matching qi_drivers pattern.
 5d. [x] **Add env var overrides** — Singlestage supports BANANA_OUTPUT_PREFIX, BANANA_OUT_DIR for Pareto.
+5e. [x] **Route outputs to scratch** — All drivers use `utils/output_dir.py` to resolve output directory: `$SCRATCH/banana_drivers_outputs/` → `./outputs/` fallback. Config changed from `stage2_bsurf_filepath` to `stage2_bsurf_filename` (resolved against output dir). Created `archive.sh` for preserving results to home. Migrated existing outputs to scratch.
+5f. [x] **Add soft current penalty for singlestage** — `CurrentPenaltyWrapper` + `QuadraticPenalty` when initial current exceeds 16 kA; hard L-BFGS-B bound when within limit. Auto-detection of current violation mode.
+5g. [x] **Configurable stage 2 current cap** — `current_cap_stage2` in config.yaml (currently false = unbounded).
 6. [ ] **Run single-stage at source parameters** — Confirm convergence at 100 kA / 10 kA with tuned BoozerLS first.
 7. [ ] **Run single-stage at hardware parameters** — Test 80 kA TF with banana current at 10 kA (or other Pareto scan values).
 8. [ ] **Establish success criteria** — Boozer residual < 1e-4, both ftol and gtol satisfied, physically reasonable coil geometry.
@@ -35,9 +48,9 @@ Once baseline converges at single resolution:
 ## Medium-Term: Pareto Front
 
 11. [ ] **Design Pareto scan infrastructure** — Sweep over banana current values (e.g., 4, 8, 12, 16 kA) and possibly volume/iota targets.
-12. [ ] **Sensitivity study** — Determine whether each scan point needs fresh stage 2 initialization or can reuse the baseline.
-13. [ ] **Build stage 1 capability** — Perturbed optimization of existing wout for varying volume/iota targets. Extract initialization from the original wout.
-14. [ ] **Run Pareto scans** — Produce database of converged solutions.
+12. [ ] **Sensitivity study** — Determine whether each scan point needs fresh stage 1 → stage 2 initialization or can reuse the baseline.
+13. [x] **Build stage 1 capability** — `01_stage1_driver.py` with warm start (existing wout) and cold start (programmatic boundary) modes. Cold start enables Pareto scans over iota/volume. *(Implementation in progress — see TODO.)*
+14. [ ] **Run Pareto scans** — Produce database of converged solutions. Each scan point runs full pipeline: stage 1 → stage 2 → singlestage.
 
 ## Later: Finite Current and Validation
 
@@ -48,10 +61,23 @@ Once baseline converges at single resolution:
 
 ## TODO (Next Session)
 
-- [ ] **Fix singlestage BoozerLS initialization** — Still failing. The jhalpern30 example also fails when run against our SIMSOPT fork (job 51135157, iota=0.002). Compared our fork (`whjh/auglag_banana`) with the jhalpern30 accessibility branch (`simsopt-accessibility/`). Key differences in Boozer infrastructure: (a) our fork adds `I` parameter (net poloidal current) to residual: `Geff = G + iota*I` vs `G` alone — with I=0 should be identical but C++ compiled code may differ, (b) Newton solver stores gradient as "residual" instead of actual residual vector, (c) VJP function signature includes I parameter. **Next steps**: (1) install accessibility-branch simsopt in a test env and verify the example works, (2) if it does, bisect the fork differences to find the breaking change, (3) check if the compiled C++ extension (`simsoptpp`) behaves differently numerically.
+### Three-stage pipeline implementation (approved plan in progress)
+- [x] **Create `utils/init_boozersurface.py`** — Refactored from `00_init_driver.py` into importable functions + CLI mode. Functions: `build_tf_coils`, `build_banana_coils`, `load_vmec_surface`, `assemble_boozersurface`, `build_and_save`.
+- [x] **Update `config.yaml`** — Added `stage1` section (resolution ramp, QA targets, cold start params), updated warm_start paths and header for new numbering.
+- [ ] **Create `01_stage1_driver.py`** — VMEC fixed-boundary optimization targeting QA (M=1, N=0). Warm start (from existing wout) and cold start (programmatic boundary) modes. Uses `Boozer` + `Quasisymmetry` + `least_squares_mpi_solve` with resolution ramp. Calls `build_and_save` at end to produce `boozersurface.init.json`. Env var overrides: `BANANA_IOTA`, `BANANA_VOLUME` for Pareto.
+- [ ] **Rename drivers** — `01_stage2_driver.py` → `02_stage2_driver.py`, `02_singlestage_driver.py` → `03_singlestage_driver.py`, delete `00_init_driver.py`.
+- [ ] **Update `submit.sh`** — Renumber shorthand (01→stage1, 02→stage2, 03→singlestage), add `NTASKS` variable for MPI, add stage1 SLURM settings (NTASKS=16, TIME=2h).
+- [ ] **Update `run_driver.sh`** — Add `srun` detection: `if SLURM_NTASKS > 1 then srun python else python`.
+- [ ] **Update README.md** — Pipeline table, three-stage workflow, fix SIMSOPT fork reference (`hayashiw/simsopt` branch `whjh/auglag_banana`, not jhalpern30).
+
+### Other
 - [ ] **Fix submit.sh fallback logic** — Debug-to-regular continuation should cancel the regular job if debug fails or is cancelled, not just on timeout.
-- [ ] **Run singlestage at source parameters** — After fixing initialization, validate the full warm-start chain works end-to-end.
-- [x] **Verify Poincare tracing after fix** — Job 51130651. Clean nested flux surfaces with correct overlay/starting points. Outboard shape mismatch is a stage 2 limitation (mean |B·N|/|B| ~ 1.3%), not tracing artifact.
+- [ ] **Run full three-stage pipeline** — Validate stage 1 → stage 2 → singlestage end-to-end. Key test: does stage-1-optimized equilibrium help BoozerLS find iota=0.15?
+- [ ] **Port scratch output routing to qi_drivers** — Reference implementation documented in memory.
+- [ ] **Clean up test env** — Remove `sims_banana_test` conda env and `$SCRATCH/banana_test/` once singlestage is resolved.
+- [x] **Verify Poincare tracing after fix** — Job 51130651. Clean nested flux surfaces with correct overlay/starting points.
+- [x] **Test accessibility branch simsopt** — Job 51171203. Same BoozerLS failure as our fork. Rules out fork changes as cause.
+- [x] **BoozerLS diagnostic sweep** — Job 51175067 (partial: 3/15 tests before timeout). All tested iota_init values (0.15, 0.05, 0.01) converge to iota~0.002 with `success=True, ||grad||=0`. Confirms wrong-basin problem — BoozerLS finds a valid minimum at the wrong iota. This motivated the three-stage pipeline approach.
 
 ## Deferred
 
@@ -77,6 +103,9 @@ Record results of optimization runs here as they are conducted.
 | 2026-04-07 | Singlestage (CW=1.0) | mpol=8, ntor=6 | 100 | 16.0 | BoozerLS | failed (init) | SLURM 51133658; CW=1.0, BFGS iota=0.012. CW not the issue — coils genuinely don't produce flux surface near iota=0.15. |
 | 2026-04-07 | Stage 2 (no current cap) | nphi=255, ntheta=64 | 100 | 10→20.96 | N/A (coil-only) | converged (428 iter) | SLURM 51134836; obj 5.2e-05, PGTOL converged. Banana current reached 20.96 kA (unbounded). Better field error than 16 kA bounded run. |
 | 2026-04-07 | Singlestage (unbounded s2) | mpol=8, ntor=6 | 100 | 20.96 | BoozerLS | failed (init) | SLURM 51135157; BFGS iota=0.002 + self-intersecting. Worse than bounded — higher banana current doesn't help BoozerSurface find iota=0.15. |
+| 2026-04-07 | jhalpern30 example s2 (accessibility) | nphi=255, ntheta=64 | 100 | 10→10 | N/A (coil-only) | converged (7 iter) | SLURM 51168974; `sims_banana_test` env. FACTR convergence after only 7 iter. Jf=1.1e-3 (20x worse than our s2). Banana current unchanged (ratio=0.100). Coils barely optimized. |
+| 2026-04-07 | jhalpern30 example SS (accessibility) | mpol=8 | 100 | 10 | BoozerLS | failed (init) | SLURM 51171203; `sims_banana_test` env, accessibility branch simsopt. BFGS iota=-1.4e-5, Newton iota=-644. **Same failure as our fork.** Rules out SIMSOPT fork as root cause. |
+| 2026-04-07 | BoozerLS diagnostic sweep | mpol=8, ntor=6 | 100 | 20.96 | BoozerLS | **wrong basin** | SLURM 51175067 (prev 51173004 timed out). 3/15 tests completed before timeout. All iota_init values (0.15, 0.05, 0.01) converge to iota~0.002, G~2.511 with `success=True, ||grad||=0`. BoozerLS consistently finds a valid LS minimum at the wrong iota. Confirms wrong-basin problem — no parameter tuning will fix this. Motivated three-stage pipeline with stage 1 VMEC optimization. |
 
 ## What Didn't Work
 
@@ -95,4 +124,6 @@ Document failed approaches here so they aren't repeated.
 | 2026-04-06 | Singlestage: fresh VMEC surface + run_code(iota=0.15) | BFGS finds iota=0.0112, Newton diverges — stage 2 coils don't produce a flux surface at target iota/volume | Need to study jhalpern30 example for correct BoozerSurface initialization in single-stage context. |
 | 2026-04-07 | Singlestage: CW=1.0 (matching example) | BFGS still converges to iota=0.012 — constraint weight is not the issue | Problem is the coil field geometry, not the BoozerLS constraint weight |
 | 2026-04-07 | Unbounded stage 2 → singlestage | Stage 2 reaches 21 kA, but singlestage BFGS finds iota=0.002 + self-intersecting. Higher banana current makes it worse | Removing the current cap does not help BoozerSurface initialization. The fundamental issue is that our coils don't produce flux surfaces near iota=0.15 regardless of current magnitude. |
-| 2026-04-07 | jhalpern30 example on our simsopt fork | Example's single_stage_banana_example.py also fails (BFGS iota=-3e-6, Newton diverges to iota=-946). Same failure pattern as our drivers. | The problem is the SIMSOPT fork, not the driver scripts. Our `whjh/auglag_banana` branch breaks BoozerSurface initialization compared to the jhalpern30 `accessibility` branch. |
+| 2026-04-07 | jhalpern30 example on our simsopt fork | Example's single_stage_banana_example.py also fails (BFGS iota=-3e-6, Newton diverges to iota=-946). Same failure pattern as our drivers. | Initially suspected SIMSOPT fork — disproved by accessibility branch test (see below). |
+| 2026-04-07 | jhalpern30 example on accessibility branch | Identical BoozerLS failure (BFGS iota=-1.4e-5, Newton iota=-644). Job 51171203. | **SIMSOPT fork is NOT the cause.** The example's stage 2 only runs 7 iterations (Jf=1.1e-3, 20x worse than our stage 2). BoozerLS can't find iota=0.15 because the coils are barely optimized. The BoozerLS initialization issue is independent of which SIMSOPT branch is used. |
+| 2026-04-07 | BoozerLS parameter sweep (iota_init, G0, CW, vol, res) | All converge to iota~0.002 with `success=True, ||grad||=0`. Job 51175067 (3/15 tests before timeout). | **Wrong-basin problem, not parameter sensitivity.** BoozerLS finds a valid LS minimum at the wrong iota regardless of initialization. The two-stage pipeline (skip stage 1) is fundamentally flawed — need VMEC stage 1 to produce a self-consistent equilibrium. |

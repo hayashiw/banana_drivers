@@ -14,11 +14,15 @@ import atexit
 import numpy as np
 import os
 import re
+import sys
 import time
 import yaml
 
 from datetime import datetime, timedelta
 from scipy.optimize import minimize
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
+from output_dir import resolve_output_dir
 
 from simsopt._core import load
 from simsopt.field import BiotSavart
@@ -81,8 +85,7 @@ GTOL    = cfg['stage2_optimizer']['gtol']
 # ──────────────────────────────────────────────────────────────────────────────
 # Output directory and atexit handler
 # ──────────────────────────────────────────────────────────────────────────────
-OUT_DIR = os.path.abspath('./outputs')
-os.makedirs(OUT_DIR, exist_ok=True)
+OUT_DIR = resolve_output_dir()
 
 DIAGNOSTICS_FILE = os.path.join(OUT_DIR, 'stage2_diagnostics.txt')
 

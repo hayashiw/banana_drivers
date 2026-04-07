@@ -15,11 +15,15 @@ import atexit
 import numpy as np
 import os
 import re
+import sys
 import time
 import yaml
 
 from datetime import datetime, timedelta
 from scipy.optimize import minimize
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
+from output_dir import resolve_output_dir
 
 from simsopt._core import load
 from simsopt.geo import (
@@ -73,6 +77,10 @@ _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yam
 with open(_cfg_path) as _f:
     cfg = yaml.safe_load(_f)
 
+# Output directory (resolve early — other paths depend on it)
+OUTPUT_PREFIX = os.environ.get('BANANA_OUTPUT_PREFIX', 'singlestage')
+OUT_DIR = resolve_output_dir()
+
 # Device geometry
 NFP      = cfg['device']['nfp']
 STELLSYM = cfg['device']['stellsym']
@@ -89,7 +97,7 @@ TARGET_VOLUME = cfg['targets']['volume']
 TARGET_IOTA   = cfg['targets']['iota']
 
 # Warm-start
-STAGE2_BSURF_FILE = os.path.abspath(cfg['warm_start']['stage2_bsurf_filepath'])
+STAGE2_BSURF_FILE = os.path.join(OUT_DIR, cfg['warm_start']['stage2_bsurf_filename'])
 
 # Boozer surface
 CONSTRAINT_WEIGHT = cfg['boozer']['constraint_weight']
@@ -126,16 +134,9 @@ TOL     = cfg['singlestage_optimizer']['tol']
 FTOL    = cfg['singlestage_optimizer']['ftol']
 GTOL    = cfg['singlestage_optimizer']['gtol']
 
-# Env var overrides for Pareto scan
-OUTPUT_PREFIX = os.environ.get('BANANA_OUTPUT_PREFIX', 'singlestage')
-
-
 # ──────────────────────────────────────────────────────────────────────────────
-# Output directory and atexit handler
+# Output atexit handler
 # ──────────────────────────────────────────────────────────────────────────────
-OUT_DIR = os.path.abspath(os.environ.get('BANANA_OUT_DIR', './outputs'))
-os.makedirs(OUT_DIR, exist_ok=True)
-
 DIAGNOSTICS_FILE = os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_diagnostics.txt')
 
 

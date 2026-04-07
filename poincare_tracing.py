@@ -38,7 +38,7 @@ Proxy coil detection:
     Finite-current Poincare tracing with proxy coils is not yet implemented
     and the script will exit with an error.
 
-Output files (in --out-dir, default ./outputs):
+Output files (in --out-dir, default: $SCRATCH/banana_drivers_outputs/ or ./outputs/):
     <label>_poincare.npz    -- phi_hits, phis, R_starts, Z_starts, params
     <label>_poincare.png    -- Poincare plot with boundary overlay (rank 0)
     <label>_fieldlines.vtu  -- VTK field line geometry (rank 0)
@@ -52,6 +52,9 @@ import time
 import yaml
 
 from datetime import timedelta
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
+from output_dir import resolve_output_dir
 
 from simsopt._core import load
 from simsopt.field import (
@@ -106,8 +109,8 @@ def parse_args():
     p.add_argument('input', help='Path to BiotSavart or BoozerSurface JSON file')
     p.add_argument('--label', default=None,
                    help='Output file prefix (default: inferred from input filename)')
-    p.add_argument('--out-dir', default='./outputs',
-                   help='Output directory (default: ./outputs)')
+    p.add_argument('--out-dir', default=None,
+                   help='Output directory (default: auto-resolved via scratch/local)')
 
     # Tracing parameters (defaults from jhalpern30 banana example)
     p.add_argument('--nlines', type=int, default=None,
@@ -423,7 +426,7 @@ def main():
         args.nlines = int(os.environ.get('SLURM_NTASKS', 16))
 
     label = args.label or infer_label(args.input)
-    out_dir = args.out_dir
+    out_dir = args.out_dir if args.out_dir is not None else resolve_output_dir()
     os.makedirs(out_dir, exist_ok=True)
 
     mprint(f"""
