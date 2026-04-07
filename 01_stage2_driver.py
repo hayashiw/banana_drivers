@@ -52,8 +52,9 @@ STELLSYM = cfg['device']['stellsym']
 TF_NUM = cfg['tf_coils']['num']
 
 # Banana coils
-BANANA_CURRENT_MAX = cfg['banana_coils']['current_max']
-BANANA_CURV_P      = cfg['banana_coils']['curv_p']
+BANANA_CURV_P        = cfg['banana_coils']['curv_p']
+BANANA_CURRENT_MAX   = cfg['banana_coils']['current_max']
+BANANA_CURRENT_CAP   = cfg['banana_coils'].get('current_cap_stage2', True)
 
 # Warm-start
 INIT_BSURF_FILE = os.path.abspath(cfg['warm_start']['init_bsurf_filepath'])
@@ -107,8 +108,8 @@ INPUT PARAMETERS ─────────────────────
         bsurf       = {INIT_BSURF_FILE}
 
     Banana coils:
-        current_max = {BANANA_CURRENT_MAX/1e3:.0f} kA
         curv p-norm = {BANANA_CURV_P}
+        current_cap = {BANANA_CURRENT_CAP} ({'bound at ' + str(BANANA_CURRENT_MAX/1e3) + ' kA' if BANANA_CURRENT_CAP else 'unbounded — limit applied in singlestage'})
 
     Thresholds:
         length_max  = {LENGTH_THRESHOLD} m
@@ -299,26 +300,28 @@ with open(DIAGNOSTICS_FILE, 'w') as f:
 proc0_print(f'[{datetime.now()}] Starting stage 2 optimization...')
 x0 = JF.x
 
-# L-BFGS-B bounds: cap banana current DOF at BANANA_CURRENT_MAX
-dof_names = JF.dof_names
+# L-BFGS-B bounds: optionally cap banana current DOF at BANANA_CURRENT_MAX
 bounds = None
-current_dof_idx = None
-for i, name in enumerate(dof_names):
-    if name == banana_current.dof_names[0]:
-        current_dof_idx = i
-        break
-if current_dof_idx is not None:
-    bounds = [(None, None)] * len(x0)
-    # Convert physical bound to DOF space: bound_dof = bound_phys * (dof / phys)
-    banana_dof_val = x0[current_dof_idx]
-    banana_phys_val = banana_current.get_value()
-    bound_upper = BANANA_CURRENT_MAX * banana_dof_val / banana_phys_val
-    bounds[current_dof_idx] = (None, bound_upper)
-    proc0_print(f'    Bound on DOF[{current_dof_idx}] ({dof_names[current_dof_idx]}): '
-                f'upper = {bound_upper:.4f}'
-                f' (physical: {BANANA_CURRENT_MAX/1e3:.0f} kA)')
+if BANANA_CURRENT_CAP:
+    dof_names = JF.dof_names
+    current_dof_idx = None
+    for i, name in enumerate(dof_names):
+        if name == banana_current.dof_names[0]:
+            current_dof_idx = i
+            break
+    if current_dof_idx is not None:
+        bounds = [(None, None)] * len(x0)
+        banana_dof_val = x0[current_dof_idx]
+        banana_phys_val = banana_current.get_value()
+        bound_upper = BANANA_CURRENT_MAX * banana_dof_val / banana_phys_val
+        bounds[current_dof_idx] = (None, bound_upper)
+        proc0_print(f'    Bound on DOF[{current_dof_idx}] ({dof_names[current_dof_idx]}): '
+                    f'upper = {bound_upper:.4f}'
+                    f' (physical: {BANANA_CURRENT_MAX/1e3:.0f} kA)')
+    else:
+        proc0_print('    WARNING: banana current DOF not found — no bound applied')
 else:
-    proc0_print('    WARNING: banana current DOF not found in JF.dof_names — no bound applied')
+    proc0_print('    No current bound (current_cap_stage2=false)')
 
 res = minimize(
     fun, x0, jac=True, method='L-BFGS-B', tol=TOL,

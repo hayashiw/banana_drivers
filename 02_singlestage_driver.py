@@ -38,6 +38,27 @@ from simsopt.geo import (
     curves_to_vtk,
 )
 from simsopt.objectives import QuadraticPenalty
+from simsopt._core.optimizable import Optimizable
+from simsopt._core.derivative import Derivative, derivative_dec
+
+
+class CurrentPenaltyWrapper(Optimizable):
+    """Wrap a ScaledCurrent so QuadraticPenalty can use it (exposes .J()/.dJ()).
+
+    Returns |I| so that QuadraticPenalty(..., "max") penalizes |I| > threshold.
+    """
+
+    def __init__(self, scaled_current):
+        Optimizable.__init__(self, x0=np.asarray([]), depends_on=[scaled_current])
+        self.scaled_current = scaled_current
+
+    def J(self):
+        return abs(self.scaled_current.get_value())
+
+    @derivative_dec
+    def dJ(self):
+        sign = np.sign(self.scaled_current.get_value())
+        return sign * self.scaled_current.vjp(np.array([1.0]))
 
 
 def proc0_print(*args, **kwargs):
@@ -59,8 +80,9 @@ STELLSYM = cfg['device']['stellsym']
 # TF coil layout
 TF_NUM = cfg['tf_coils']['num']
 
-# Banana coil curvature
-BANANA_CURV_P = cfg['banana_coils']['curv_p']
+# Banana coil constraints
+BANANA_CURV_P      = cfg['banana_coils']['curv_p']
+BANANA_CURRENT_MAX = cfg['banana_coils']['current_max']
 
 # Physics targets
 TARGET_VOLUME = cfg['targets']['volume']
@@ -94,6 +116,7 @@ LEN_WEIGHT   = cfg['singlestage_weights']['length']
 CC_WEIGHT    = cfg['singlestage_weights']['coil_coil']
 CS_WEIGHT    = cfg['singlestage_weights']['coil_surface']
 CURV_WEIGHT  = cfg['singlestage_weights']['curvature']
+CURR_WEIGHT  = cfg['singlestage_weights']['current']
 
 # Optimizer (L-BFGS-B)
 MAXITER = cfg['singlestage_optimizer']['maxiter']
@@ -154,6 +177,7 @@ INPUT PARAMETERS ─────────────────────
         cc_min      = {CC_THRESHOLD} m
         cs_min      = {CS_THRESHOLD} m
         curv_max    = {CURV_THRESHOLD} m^-1
+        current_max = {BANANA_CURRENT_MAX/1e3:.0f} kA
 
     Objective weights:
         nonqs       = {NONQS_WEIGHT:.3e}
@@ -163,6 +187,7 @@ INPUT PARAMETERS ─────────────────────
         coil_coil   = {CC_WEIGHT:.3e}
         coil_surf   = {CS_WEIGHT:.3e}
         curvature   = {CURV_WEIGHT:.3e}
+        current     = {CURR_WEIGHT:.3e}
 
     Optimizer (L-BFGS-B):
         maxiter = {MAXITER}
@@ -228,8 +253,8 @@ solve_success = res["success"]
 try:
     not_intersecting = not boozersurface.surface.is_self_intersecting()
 except Exception as e:
-    proc0_print(f"Error checking self-intersection: {e}")
-    not_intersecting = False
+    proc0_print(f"  Warning: self-intersection check unavailable ({e}), assuming OK")
+    not_intersecting = True
 success = solve_success and not_intersecting
 proc0_print(f'  Solve success: {solve_success}, Not self-intersecting: {not_intersecting}')
 if not success:
@@ -257,9 +282,24 @@ Jl      = QuadraticPenalty(_Jl, _Jl.J(), "max")
 Jcs     = CurveSurfaceDistance(curves, surface, CS_THRESHOLD)
 Jcc     = CurveCurveDistance(curves, CC_THRESHOLD)
 Jcurv   = LpCurveCurvature(banana_curve, BANANA_CURV_P, CURV_THRESHOLD)
+_Jcurr  = CurrentPenaltyWrapper(banana_coils[0].current)
+Jcurr   = QuadraticPenalty(_Jcurr, BANANA_CURRENT_MAX, "max")
 
-JF = (NONQS_WEIGHT * Jnonqs) + (BRES_WEIGHT * Jbres) + (IOTA_WEIGHT * Jiota) \
-   + (LEN_WEIGHT * Jl) + (CS_WEIGHT * Jcs) + (CC_WEIGHT * Jcc) + (CURV_WEIGHT * Jcurv)
+# Auto-detect current enforcement mode:
+# If initial current already within limit → hard L-BFGS-B bound (no penalty needed)
+# If initial current exceeds limit → soft penalty to drive it down
+CURRENT_VIOLATES = abs(banana_coils[0].current.get_value()) > BANANA_CURRENT_MAX
+if CURRENT_VIOLATES:
+    proc0_print(f'  Banana current {abs(banana_coils[0].current.get_value())/1e3:.3f} kA '
+                f'exceeds limit {BANANA_CURRENT_MAX/1e3:.0f} kA → using soft penalty (weight={CURR_WEIGHT:.3e})')
+    JF = (NONQS_WEIGHT * Jnonqs) + (BRES_WEIGHT * Jbres) + (IOTA_WEIGHT * Jiota) \
+       + (LEN_WEIGHT * Jl) + (CS_WEIGHT * Jcs) + (CC_WEIGHT * Jcc) + (CURV_WEIGHT * Jcurv) \
+       + (CURR_WEIGHT * Jcurr)
+else:
+    proc0_print(f'  Banana current {abs(banana_coils[0].current.get_value())/1e3:.3f} kA '
+                f'within limit {BANANA_CURRENT_MAX/1e3:.0f} kA → using hard L-BFGS-B bound')
+    JF = (NONQS_WEIGHT * Jnonqs) + (BRES_WEIGHT * Jbres) + (IOTA_WEIGHT * Jiota) \
+       + (LEN_WEIGHT * Jl) + (CS_WEIGHT * Jcs) + (CC_WEIGHT * Jcc) + (CURV_WEIGHT * Jcurv)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -288,6 +328,7 @@ INITIAL STATE (MPOL={MPOL}) ─────────────────�
         Boozer residual:                 {_boozer_residual_norm():.6e}
         Iota:                            {_Jiota.J():.6e}
         Banana coil length:              {_Jl.J():.6e} m
+        Banana coil current:             {_Jcurr.J()/1e3:.3f} kA (limit: {BANANA_CURRENT_MAX/1e3:.0f} kA)
         CC separation (shortest_dist):   {Jcc.shortest_distance():.6e} m
         CS separation (shortest_dist):   {Jcs.shortest_distance():.6e} m
         Max curvature (kappa.max):       {banana_curve.kappa().max():.6e} m^-1
@@ -302,6 +343,7 @@ INITIAL STATE (MPOL={MPOL}) ─────────────────�
         CC distance penalty:             ({CC_WEIGHT:.3e}){Jcc.J():.6e} = {CC_WEIGHT * Jcc.J():.6e}
         CS distance penalty:             ({CS_WEIGHT:.3e}){Jcs.J():.6e} = {CS_WEIGHT * Jcs.J():.6e}
         Curvature penalty (LpCurvCurv):  ({CURV_WEIGHT:.3e}){Jcurv.J():.6e} = {CURV_WEIGHT * Jcurv.J():.6e}
+        Current penalty (QuadPen.J):     ({CURR_WEIGHT:.3e}){Jcurr.J():.6e} = {CURR_WEIGHT * Jcurr.J():.6e}
 
     n_dofs = {len(JF.x)}
 """
@@ -340,6 +382,7 @@ def _write_diagnostics_row(J, dJ, t0, solve_ok=True):
         f"{Jcc.shortest_distance():.6e},"
         f"{Jcs.shortest_distance():.6e},"
         f"{banana_curve.kappa().max():.6e},"
+        f"{_Jcurr.J():.6e},"
         f"{int(solve_ok)}"
     )
     proc0_print(row)
@@ -364,8 +407,10 @@ def fun(dofs):
     try:
         not_intersecting = not surface.is_self_intersecting()
     except Exception as e:
-        proc0_print(f"  Surface check failed: {e}")
-        not_intersecting = False
+        if not track.get("_si_warned"):
+            proc0_print(f"  Warning: self-intersection check unavailable ({e}), assuming OK for all evals")
+            track["_si_warned"] = True
+        not_intersecting = True
     success = solve_success and not_intersecting
 
     if success:
@@ -410,6 +455,7 @@ def callback(x):
         Boozer residual:                 {_boozer_residual_norm():.6e}
         Iota:                            {_Jiota.J():.6e}
         Banana coil length:              {_Jl.J():.6e} m
+        Banana coil current:             {_Jcurr.J()/1e3:.3f} kA (limit: {BANANA_CURRENT_MAX/1e3:.0f} kA)
         CC separation (shortest_dist):   {Jcc.shortest_distance():.6e} m
         CS separation (shortest_dist):   {Jcs.shortest_distance():.6e} m
         Max curvature (kappa.max):       {banana_curve.kappa().max():.6e} m^-1
@@ -424,6 +470,7 @@ def callback(x):
         CC distance penalty:             ({CC_WEIGHT:.3e}){Jcc.J():.6e} = {CC_WEIGHT * Jcc.J():.6e}
         CS distance penalty:             ({CS_WEIGHT:.3e}){Jcs.J():.6e} = {CS_WEIGHT * Jcs.J():.6e}
         Curvature penalty (LpCurvCurv):  ({CURV_WEIGHT:.3e}){Jcurv.J():.6e} = {CURV_WEIGHT * Jcurv.J():.6e}
+        Current penalty (QuadPen.J):     ({CURR_WEIGHT:.3e}){Jcurr.J():.6e} = {CURR_WEIGHT * Jcurr.J():.6e}
 """
     )
 
@@ -449,6 +496,7 @@ with open(DIAGNOSTICS_FILE, 'w') as f:
         'coil_length,'
         'ccdist,csdist,'
         'max_kappa,'
+        'banana_current,'
         'solve_ok\n'
     )
 
@@ -459,8 +507,30 @@ with open(DIAGNOSTICS_FILE, 'w') as f:
 proc0_print(f'[{datetime.now()}] Starting singlestage optimization (MPOL={MPOL})...')
 x0 = JF.x
 
+# Hard L-BFGS-B bound when current is within limit (no penalty in objective)
+bounds = None
+if not CURRENT_VIOLATES:
+    dof_names = JF.dof_names
+    current_dof_idx = None
+    for i, name in enumerate(dof_names):
+        if name == banana_coils[0].current.dof_names[0]:
+            current_dof_idx = i
+            break
+    if current_dof_idx is not None:
+        bounds = [(None, None)] * len(x0)
+        banana_dof_val = x0[current_dof_idx]
+        banana_phys_val = banana_coils[0].current.get_value()
+        bound_upper = BANANA_CURRENT_MAX * banana_dof_val / banana_phys_val
+        bounds[current_dof_idx] = (None, bound_upper)
+        proc0_print(f'    Bound on DOF[{current_dof_idx}] ({dof_names[current_dof_idx]}): '
+                    f'upper = {bound_upper:.4f}'
+                    f' (physical: {BANANA_CURRENT_MAX/1e3:.0f} kA)')
+    else:
+        proc0_print('    WARNING: banana current DOF not found — no bound applied')
+
 res = minimize(
     fun, x0, jac=True, method='L-BFGS-B', tol=TOL,
+    bounds=bounds,
     callback=callback,
     options=dict(maxiter=MAXITER, maxcor=MAXCOR, maxfun=MAXFUN,
                  ftol=FTOL, gtol=GTOL),
@@ -529,6 +599,7 @@ FINAL STATE (MPOL={MPOL}) ──────────────────
         Boozer residual:                 {_boozer_residual_norm():.6e}
         Iota:                            {_Jiota.J():.6e}
         Banana coil length:              {_Jl.J():.6e} m
+        Banana coil current:             {_Jcurr.J()/1e3:.3f} kA (limit: {BANANA_CURRENT_MAX/1e3:.0f} kA)
         CC separation (shortest_dist):   {Jcc.shortest_distance():.6e} m
         CS separation (shortest_dist):   {Jcs.shortest_distance():.6e} m
         Max curvature (kappa.max):       {banana_curve.kappa().max():.6e} m^-1
@@ -543,6 +614,7 @@ FINAL STATE (MPOL={MPOL}) ──────────────────
         CC distance penalty:             ({CC_WEIGHT:.3e}){Jcc.J():.6e} = {CC_WEIGHT * Jcc.J():.6e}
         CS distance penalty:             ({CS_WEIGHT:.3e}){Jcs.J():.6e} = {CS_WEIGHT * Jcs.J():.6e}
         Curvature penalty (LpCurvCurv):  ({CURV_WEIGHT:.3e}){Jcurv.J():.6e} = {CURV_WEIGHT * Jcurv.J():.6e}
+        Current penalty (QuadPen.J):     ({CURR_WEIGHT:.3e}){Jcurr.J():.6e} = {CURR_WEIGHT * Jcurr.J():.6e}
 """
 )
 

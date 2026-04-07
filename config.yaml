@@ -38,7 +38,8 @@ tf_coils:
 # ── Banana coils ─────────────────────────────────────────────────────────────
 banana_coils:
   current_init: 10.0e+3    # A — initial current for optimization
-  current_max: 16.0e+3     # A — hardware upper bound (L-BFGS-B box constraint)
+  current_max: 16.0e+3     # A — hardware upper bound
+  current_cap_stage2: false # If true, apply L-BFGS-B bound in stage 2; if false, unbounded
   nfp: 5
   order: 2                 # Fourier order (order=4 produces bad shapes)
   nqpts: 128               # Quadrature points on curve
@@ -65,7 +66,7 @@ plasma_surface:
 boozer:
   mpol: 8
   ntor: 6
-  constraint_weight: 100.0   # BoozerLS constraint weight
+  constraint_weight: 1.0   # BoozerLS constraint weight
 
 # ── Physics targets (singlestage) ───────────────────────────────────────────
 targets:
@@ -108,6 +109,7 @@ singlestage_weights:
   coil_coil: 1.0e+2
   coil_surface: 1.0e+0
   curvature: 1.0e-1
+  current: 1.0e+2     # Penalty weight for banana current > current_max (16 kA)
 
 # ── Singlestage optimizer (L-BFGS-B) ────────────────────────────────────────
 singlestage_optimizer:

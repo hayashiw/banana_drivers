@@ -48,7 +48,8 @@ Once baseline converges at single resolution:
 
 ## TODO (Next Session)
 
-- [ ] **Fix singlestage BoozerLS initialization** — Job 51131288 failed: BFGS converges to iota=0.0112 (vs target 0.15), Newton diverges. Root cause: fresh VMEC surface + run_code(TARGET_IOTA=0.15) doesn't match actual coil field geometry. Need to study jhalpern30 `single_stage_banana_example.py` (accessibility branch) to understand correct initialization approach. Previous fetch was truncated.
+- [ ] **Fix singlestage BoozerLS initialization** — Still failing. Tried: CW=1.0 (job 51133658, iota=0.012), unbounded stage 2 current (job 51134836, 21 kA) → singlestage (job 51135157, iota=0.002 + self-intersecting). The coil field does not produce a flux surface near iota=0.15 regardless of current bound or constraint weight. The jhalpern30 example uses identical init logic but presumably has different stage 2 coil output. **Next steps**: (a) try loading jhalpern30's `biot_savart_opt.json` directly to verify their coils work with our init, (b) investigate if the VMEC surface scaling or wout file differs, (c) consider using the solved iota (~0.012) as initial guess instead of 0.15.
+- [ ] **Fix submit.sh fallback logic** — Debug-to-regular continuation should cancel the regular job if debug fails or is cancelled, not just on timeout.
 - [ ] **Run singlestage at source parameters** — After fixing initialization, validate the full warm-start chain works end-to-end.
 - [x] **Verify Poincare tracing after fix** — Job 51130651. Clean nested flux surfaces with correct overlay/starting points. Outboard shape mismatch is a stage 2 limitation (mean |B·N|/|B| ~ 1.3%), not tracing artifact.
 
@@ -72,7 +73,10 @@ Record results of optimization runs here as they are conducted.
 | 2026-04-06 | Stage 2 (warm-start chain) | nphi=255, ntheta=64 | 100 | 10→16.0 | N/A (coil-only) | converged (287 iter) | SLURM 51121626; obj 7.2e-05, PGTOL converged. Loaded from boozersurface.init.json. Results within ~5-14% of 51108936 (serialization round-trip). |
 | 2026-04-06 | Poincare (pre-fix) | — | 100 | 16.0 | N/A | bad overlay | SLURM 51126922/51129270; field lines show clear nested flux surfaces, but Boozer-solved overlay surface distorted (iota=0.011 vs target 0.15) → starting points misaligned. |
 | 2026-04-06 | Poincare (post-fix) | — | 100 | 16.0 | N/A | shape mismatch | SLURM 51130651; clean nested flux surfaces, correct starting points. Flux surfaces protrude past target surface on outboard midplane — coil DOFs insufficient to make B·n small everywhere (mean |B·N|/|B| ~ 1.3%). Expected for stage 2; singlestage should resolve by jointly optimizing surface. |
-| 2026-04-06 | Singlestage (BoozerLS) | mpol=8, ntor=6 | 100 | 16.0 | BoozerLS | failed (init) | SLURM 51131288; BFGS converges to iota=0.0112 (vs target 0.15), Newton diverges. Fresh VMEC surface init doesn't match coil field geometry. Need to study jhalpern30 example for correct init. |
+| 2026-04-06 | Singlestage (BoozerLS) | mpol=8, ntor=6 | 100 | 16.0 | BoozerLS | failed (init) | SLURM 51131288; BFGS converges to iota=0.0112 (vs target 0.15), Newton diverges. Fresh VMEC surface init doesn't match coil field geometry. CW=100. |
+| 2026-04-07 | Singlestage (CW=1.0) | mpol=8, ntor=6 | 100 | 16.0 | BoozerLS | failed (init) | SLURM 51133658; CW=1.0, BFGS iota=0.012. CW not the issue — coils genuinely don't produce flux surface near iota=0.15. |
+| 2026-04-07 | Stage 2 (no current cap) | nphi=255, ntheta=64 | 100 | 10→20.96 | N/A (coil-only) | converged (428 iter) | SLURM 51134836; obj 5.2e-05, PGTOL converged. Banana current reached 20.96 kA (unbounded). Better field error than 16 kA bounded run. |
+| 2026-04-07 | Singlestage (unbounded s2) | mpol=8, ntor=6 | 100 | 20.96 | BoozerLS | failed (init) | SLURM 51135157; BFGS iota=0.002 + self-intersecting. Worse than bounded — higher banana current doesn't help BoozerSurface find iota=0.15. |
 
 ## What Didn't Work
 
@@ -89,3 +93,5 @@ Document failed approaches here so they aren't repeated.
 | 2026-04-06 | `range="half period"` for BoozerSurface quadpoints | Surface covers only half a field period `[0, 0.5/nfp)` instead of full period `[0, 1/nfp)` | Must use `range="field period"` in all drivers. Fixed in 00_init, 01_stage2, 02_singlestage. Existing JSONs patched via `patch_surface_quadpoints.py`. |
 | 2026-04-06 | BoozerSurface.run_code() for Poincare overlay | Boozer solve converges to wrong surface (iota=0.011 vs 0.15) when target volume doesn't match coil field geometry | Removed Boozer solve from Poincare tracing; use raw loaded surface for both overlay and starting points. |
 | 2026-04-06 | Singlestage: fresh VMEC surface + run_code(iota=0.15) | BFGS finds iota=0.0112, Newton diverges — stage 2 coils don't produce a flux surface at target iota/volume | Need to study jhalpern30 example for correct BoozerSurface initialization in single-stage context. |
+| 2026-04-07 | Singlestage: CW=1.0 (matching example) | BFGS still converges to iota=0.012 — constraint weight is not the issue | Problem is the coil field geometry, not the BoozerLS constraint weight |
+| 2026-04-07 | Unbounded stage 2 → singlestage | Stage 2 reaches 21 kA, but singlestage BFGS finds iota=0.002 + self-intersecting. Higher banana current makes it worse | Removing the current cap does not help BoozerSurface initialization. The fundamental issue is that our coils don't produce flux surfaces near iota=0.15 regardless of current magnitude. |
