@@ -1,0 +1,119 @@
+# config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Single source of truth for all banana driver scripts:
+#   00_init_driver.py        (coil + surface initialization)
+#   01_stage2_driver.py      (coil-only optimization)
+#   02_singlestage_driver.py (joint coil + surface optimization)
+#
+# Hardware constraint thresholds are fixed physical limits from the device
+# design (coil-coil clearance, max curvature from bending radius, max coil
+# length from available conductor).  Unlike qi_drivers, these are NOT
+# expressed with relaxation factors — the values are non-negotiable.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Warm-start paths ─────────────────────────────────────────────────────────
+# Paths are relative to the banana_drivers/ directory.
+warm_start:
+  wout_filepath: "inputs/wout_nfp22ginsburg_000_014417_iota15.nc"
+  init_bsurf_filepath: "inputs/boozersurface.init.json"                 # from 00_init
+  stage2_bsurf_filepath: "outputs/stage2_boozersurface_opt.json"        # from 01_stage2
+
+# ── Device geometry ──────────────────────────────────────────────────────────
+device:
+  nfp: 5
+  stellsym: true
+  major_radius: 0.976     # m (TF coil + winding surface R0)
+  plasma_radius: 0.925    # m (target plasma major radius)
+
+# ── TF coils (fixed, not optimized) ─────────────────────────────────────────
+tf_coils:
+  current: 100.0e+3    # A
+  num: 20
+  nfp: 1
+  stellsym: false
+  R0: 0.976             # m
+  R1: 0.4               # m
+  order: 1
+
+# ── Banana coils ─────────────────────────────────────────────────────────────
+banana_coils:
+  current_init: 10.0e+3    # A — initial current for optimization
+  current_max: 16.0e+3     # A — hardware upper bound (L-BFGS-B box constraint)
+  nfp: 5
+  order: 2                 # Fourier order (order=4 produces bad shapes)
+  nqpts: 128               # Quadrature points on curve
+  curv_p: 4                # Curvature Lp-norm exponent (L4 > L2 for banana coils)
+  # Initial Fourier coefficients
+  phi0: 0.06
+  phi1: 0.03
+  theta0: 0.5
+  theta1: 0.1
+
+# ── Winding surface ─────────────────────────────────────────────────────────
+winding_surface:
+  R0: 0.976       # m (major radius, same as TF)
+  a: 0.215        # m (minor radius)
+
+# ── Plasma surface (VMEC) ───────────────────────────────────────────────────
+plasma_surface:
+  nphi: 255
+  ntheta: 64
+  vmec_s: 0.24    # Flux surface label
+  vmec_R: 0.925   # Target major radius (m)
+
+# ── Boozer surface (singlestage) ────────────────────────────────────────────
+boozer:
+  mpol: 8
+  ntor: 6
+  constraint_weight: 100.0   # BoozerLS constraint weight
+
+# ── Physics targets (singlestage) ───────────────────────────────────────────
+targets:
+  volume: 0.10      # m^3
+  iota: 0.15        # Edge rotational transform
+
+# ── Hardware constraint thresholds ───────────────────────────────────────────
+# These are fixed physical limits.  Do NOT add relaxation factors.
+thresholds:
+  # Stage 2
+  length_max: 1.75          # m — max banana coil length
+  coil_coil_min: 0.05       # m — min coil-coil clearance
+  curvature_max_stage2: 40  # m^-1 — max curvature (stage 2, looser)
+  # Singlestage
+  coil_surface_min: 0.02    # m — min coil-surface clearance
+  curvature_max_ss: 20      # m^-1 — max curvature (singlestage, tighter)
+
+# ── Stage 2 objective weights ────────────────────────────────────────────────
+stage2_weights:
+  squared_flux: 1.0e+0
+  length: 5.0e-4
+  coil_coil: 1.0e+2
+  curvature: 1.0e-4
+
+# ── Stage 2 optimizer (L-BFGS-B) ────────────────────────────────────────────
+stage2_optimizer:
+  maxiter: 500
+  maxcor: 300
+  maxfun: 10000
+  tol: 1.0e-15
+  ftol: 1.0e-15
+  gtol: 1.0e-6
+
+# ── Singlestage objective weights ───────────────────────────────────────────
+singlestage_weights:
+  nonqs: 1.0e+0
+  boozer_residual: 1.0e+3
+  iota: 1.0e+2
+  length: 1.0e+0
+  coil_coil: 1.0e+2
+  coil_surface: 1.0e+0
+  curvature: 1.0e-1
+
+# ── Singlestage optimizer (L-BFGS-B) ────────────────────────────────────────
+singlestage_optimizer:
+  maxiter: 500
+  maxcor: 300
+  maxfun: 10000
+  tol: 1.0e-15
+  ftol: 1.0e-5
+  gtol: 1.0e-2

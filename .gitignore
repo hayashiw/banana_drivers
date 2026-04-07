@@ -98,6 +98,9 @@ local/
 # Shell scripts
 # *.sh
 
+# Backup files
+*.bak
+
 # Slurm output files
 slurm-*.out
 slurm-*.err

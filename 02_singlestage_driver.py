@@ -16,6 +16,7 @@ import numpy as np
 import os
 import re
 import time
+import yaml
 
 from datetime import datetime, timedelta
 from scipy.optimize import minimize
@@ -45,68 +46,74 @@ def proc0_print(*args, **kwargs):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Parameters
+# Load configuration
 # ──────────────────────────────────────────────────────────────────────────────
+_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+with open(_cfg_path) as _f:
+    cfg = yaml.safe_load(_f)
 
-# Physics targets
-TARGET_VOLUME = 0.10
-TARGET_IOTA   = 0.15
+# Device geometry
+NFP      = cfg['device']['nfp']
+STELLSYM = cfg['device']['stellsym']
 
-# Warm-start
-BIOTSAVART_FILE = "outputs/stage2_biotsavart_opt.json"
-
-# Boozer surface
-CONSTRAINT_WEIGHT = 1e2
-MPOL   = 8
-NTOR   = 6
+# TF coil layout
+TF_NUM = cfg['tf_coils']['num']
 
 # Banana coil curvature
-BANANA_CURV_P = 4
+BANANA_CURV_P = cfg['banana_coils']['curv_p']
 
-# Symmetry
-NFP      = 5
-STELLSYM = True
+# Physics targets
+TARGET_VOLUME = cfg['targets']['volume']
+TARGET_IOTA   = cfg['targets']['iota']
 
-# Coil layout
-TF_NUM = 20
+# Warm-start
+STAGE2_BSURF_FILE = os.path.abspath(cfg['warm_start']['stage2_bsurf_filepath'])
+
+# Boozer surface
+CONSTRAINT_WEIGHT = cfg['boozer']['constraint_weight']
+MPOL   = cfg['boozer']['mpol']
+NTOR   = cfg['boozer']['ntor']
 
 # Plasma surface from VMEC (for initialization)
-NPHI   = 255
-NTHETA = 64
-VMEC_S = 0.24
-VMEC_R = 0.925
-WOUT_FILE = os.path.abspath("inputs/wout_nfp22ginsburg_000_014417_iota15.nc")
+NPHI   = cfg['plasma_surface']['nphi']
+NTHETA = cfg['plasma_surface']['ntheta']
+VMEC_S = cfg['plasma_surface']['vmec_s']
+VMEC_R = cfg['plasma_surface']['vmec_R']
+WOUT_FILE = os.path.abspath(cfg['warm_start']['wout_filepath'])
 
-# Objective thresholds
-CC_THRESHOLD   = 0.05
-CS_THRESHOLD   = 0.02
-CURV_THRESHOLD = 20
+# Objective thresholds (hardware constraints — not relaxable)
+CC_THRESHOLD   = cfg['thresholds']['coil_coil_min']
+CS_THRESHOLD   = cfg['thresholds']['coil_surface_min']
+CURV_THRESHOLD = cfg['thresholds']['curvature_max_ss']
 
 # Objective weights
-NONQS_WEIGHT = 1e+0
-BRES_WEIGHT  = 1e+3
-IOTA_WEIGHT  = 1e+2
-LEN_WEIGHT   = 1e+0
-CC_WEIGHT    = 1e+2
-CS_WEIGHT    = 1e+0
-CURV_WEIGHT  = 1e-1
+NONQS_WEIGHT = cfg['singlestage_weights']['nonqs']
+BRES_WEIGHT  = cfg['singlestage_weights']['boozer_residual']
+IOTA_WEIGHT  = cfg['singlestage_weights']['iota']
+LEN_WEIGHT   = cfg['singlestage_weights']['length']
+CC_WEIGHT    = cfg['singlestage_weights']['coil_coil']
+CS_WEIGHT    = cfg['singlestage_weights']['coil_surface']
+CURV_WEIGHT  = cfg['singlestage_weights']['curvature']
 
 # Optimizer (L-BFGS-B)
-MAXITER = 500
-MAXCOR  = 300
-MAXFUN  = 10000
-TOL     = 1e-15
-FTOL    = 1e-5
-GTOL    = 1e-2
+MAXITER = cfg['singlestage_optimizer']['maxiter']
+MAXCOR  = cfg['singlestage_optimizer']['maxcor']
+MAXFUN  = cfg['singlestage_optimizer']['maxfun']
+TOL     = cfg['singlestage_optimizer']['tol']
+FTOL    = cfg['singlestage_optimizer']['ftol']
+GTOL    = cfg['singlestage_optimizer']['gtol']
+
+# Env var overrides for Pareto scan
+OUTPUT_PREFIX = os.environ.get('BANANA_OUTPUT_PREFIX', 'singlestage')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Output directory and atexit handler
 # ──────────────────────────────────────────────────────────────────────────────
-OUT_DIR = os.path.abspath('./outputs')
+OUT_DIR = os.path.abspath(os.environ.get('BANANA_OUT_DIR', './outputs'))
 os.makedirs(OUT_DIR, exist_ok=True)
 
-DIAGNOSTICS_FILE = os.path.join(OUT_DIR, 'singlestage_diagnostics.txt')
+DIAGNOSTICS_FILE = os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_diagnostics.txt')
 
 
 def _emit_out_dir_on_exit():
@@ -123,7 +130,9 @@ atexit.register(_emit_out_dir_on_exit)
 proc0_print(
     f"""
 INPUT PARAMETERS ─────────────────────────────
+    Config:          {_cfg_path}
     Date:            {datetime.now()}
+    Output prefix:   {OUTPUT_PREFIX}
 
     Physics targets:
         volume      = {TARGET_VOLUME}
@@ -138,7 +147,7 @@ INPUT PARAMETERS ─────────────────────
     Banana coil curvature p-norm = {BANANA_CURV_P}
 
     Warm-start:
-        biotsavart  = {BIOTSAVART_FILE}
+        bsurf       = {STAGE2_BSURF_FILE}
         wout        = {WOUT_FILE}
 
     Thresholds:
@@ -169,17 +178,18 @@ INPUT PARAMETERS ─────────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 # Load warm-start data and build surface
 # ──────────────────────────────────────────────────────────────────────────────
-proc0_print(f'Loading BiotSavart from {BIOTSAVART_FILE}')
+proc0_print(f'Loading BoozerSurface from {STAGE2_BSURF_FILE}')
 
 surface = SurfaceRZFourier.from_wout(
-    WOUT_FILE, range="half period", nphi=NPHI, ntheta=NTHETA, s=VMEC_S,
+    WOUT_FILE, range="field period", nphi=NPHI, ntheta=NTHETA, s=VMEC_S,
 )
 surface.set_dofs(surface.get_dofs() * VMEC_R / surface.major_radius())
 gamma = surface.gamma().copy()
 quadpoints_theta = surface.quadpoints_theta.copy()
 quadpoints_phi = surface.quadpoints_phi.copy()
 
-biotsavart = load(BIOTSAVART_FILE)
+boozersurface_loaded = load(STAGE2_BSURF_FILE)
+biotsavart = boozersurface_loaded.biotsavart
 coils = biotsavart.coils
 curves = [coil.curve for coil in coils]
 
@@ -228,9 +238,9 @@ if not success:
 biotsavart.set_points(surface.gamma().reshape((-1, 3)))
 Bbs = biotsavart.B().reshape(surface.gamma().shape)
 Bdotn_surf = np.sum(Bbs * surface.unitnormal(), axis=-1)
-surface.to_vtk(os.path.join(OUT_DIR, 'singlestage_surf_init'), extra_data={"B_N": Bdotn_surf[..., None]})
-curves_to_vtk(curves, os.path.join(OUT_DIR, 'singlestage_curves_init'), close=True)
-biotsavart.save(os.path.join(OUT_DIR, 'singlestage_biotsavart_init.json'))
+surface.to_vtk(os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_surf_init'), extra_data={"B_N": Bdotn_surf[..., None]})
+curves_to_vtk(curves, os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_curves_init'), close=True)
+biotsavart.save(os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_biotsavart_init.json'))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -426,7 +436,7 @@ t0 = time.time()
 with open(DIAGNOSTICS_FILE, 'w') as f:
     f.write(f'# Singlestage Diagnostics\n')
     f.write(f'# Date: {datetime.now()}\n')
-    f.write(f'# BiotSavart: {BIOTSAVART_FILE}\n')
+    f.write(f'# BoozerSurface: {STAGE2_BSURF_FILE}\n')
     f.write(f'# MPOL={MPOL}, NTOR={NTOR}, CONSTRAINT_WEIGHT={CONSTRAINT_WEIGHT:.3e}\n')
     f.write(f'# TARGET_VOLUME={TARGET_VOLUME}, TARGET_IOTA={TARGET_IOTA}\n')
     f.write(f'# CC_THRESHOLD={CC_THRESHOLD}, CS_THRESHOLD={CS_THRESHOLD}, CURV_THRESHOLD={CURV_THRESHOLD}\n')
@@ -463,7 +473,7 @@ res = minimize(
 end_date = datetime.now()
 opt_runtime = time.time() - t0
 
-grad_inf    = np.linalg.norm(JF.dJ(), ord=np.inf)
+grad_inf = np.max(np.abs(res.jac)) if hasattr(res, 'jac') and res.jac is not None else float('nan')
 hit_maxiter = res.nit >= MAXITER
 hit_maxfun  = res.nfev >= MAXFUN
 hit_gtol    = grad_inf <= GTOL
@@ -493,7 +503,7 @@ proc0_print(
 Total runtime: {timedelta(seconds=opt_runtime)}
 
 {'SUCCESS' if success else 'FAILURE'} ─────────────────────────────────────────
-    Banana coil current : {banana_current/1e3:.5f} kA
+    Banana coil current : {banana_coils[0].current.get_value()/1e3:.5f} kA
     scipy message       : {res.message}
     scipy success       : {res.success}
     iterations          : {res.nit} / {MAXITER}  (maxiter {'REACHED' if hit_maxiter else 'not reached'})
@@ -540,15 +550,15 @@ FINAL STATE (MPOL={MPOL}) ──────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 # Save final outputs
 # ──────────────────────────────────────────────────────────────────────────────
-boozersurface.save(os.path.join(OUT_DIR, "singlestage_boozersurface_opt.json"))
-curves_to_vtk(curves, os.path.join(OUT_DIR, 'singlestage_coils_opt'))
+boozersurface.save(os.path.join(OUT_DIR, f"{OUTPUT_PREFIX}_boozersurface_opt.json"))
+curves_to_vtk(curves, os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_coils_opt'))
 
 Bdotn = np.sum(biotsavart.B().reshape(surface.gamma().shape) * surface.unitnormal(), axis=-1)
 modB  = np.linalg.norm(biotsavart.B().reshape(surface.gamma().shape), axis=-1)
-surface.to_vtk(os.path.join(OUT_DIR, 'singlestage_surf_opt'), extra_data={
+surface.to_vtk(os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_surf_opt'), extra_data={
     "B_N": Bdotn[..., None], "B_N/|B|": (Bdotn/modB)[..., None],
 })
-np.savez(os.path.join(OUT_DIR, "singlestage_state_opt.npz"),
+np.savez(os.path.join(OUT_DIR, f"{OUTPUT_PREFIX}_state_opt.npz"),
          iota=boozersurface.res["iota"], G=boozersurface.res["G"])
 
 proc0_print(f'Diagnostics saved to {DIAGNOSTICS_FILE}')
