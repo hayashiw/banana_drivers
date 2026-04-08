@@ -1,5 +1,5 @@
 """
-01_stage2_driver.py
+02_stage2_driver.py
 ───────────────────
 Stage 2 coil-only optimization for the banana coil stellarator-tokamak hybrid.
 
@@ -7,8 +7,10 @@ Minimizes squared flux + geometric penalties (coil length, curvature,
 coil-coil separation) using L-BFGS-B.  TF coils are fixed; only banana
 coil shape and current DOFs are optimized.
 
+Pipeline:  01_stage1 -> 02_stage2 (this) -> 03_singlestage
+
 Usage:
-    python 01_stage2_driver.py
+    python 02_stage2_driver.py
 """
 import atexit
 import numpy as np
@@ -25,13 +27,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uti
 from output_dir import resolve_output_dir
 
 from simsopt._core import load
-from simsopt.field import BiotSavart
 from simsopt.geo import (
     CurveCurveDistance,
     CurveLength,
     LpCurveCurvature,
-
-    curves_to_vtk,
 )
 from simsopt.objectives import QuadraticPenalty, SquaredFlux
 
@@ -158,8 +157,6 @@ proc0_print(f'  {len(tf_coils)} TF coils + {len(banana_coils)} banana coils load
 
 Bbs = biotsavart.B().reshape(surface.gamma().shape)
 Bdotn_surf = np.sum(Bbs * surface.unitnormal(), axis=-1)
-surface.to_vtk(os.path.join(OUT_DIR, 'stage2_surf_init'), extra_data={"B_N": Bdotn_surf[..., None]})
-curves_to_vtk(curves, os.path.join(OUT_DIR, 'stage2_curves_init'), close=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -421,11 +418,7 @@ FINAL STATE ──────────────────────�
 # ──────────────────────────────────────────────────────────────────────────────
 # Save final outputs
 # ──────────────────────────────────────────────────────────────────────────────
-surface.to_vtk(os.path.join(OUT_DIR, 'stage2_surf_opt'), extra_data={"B_N": Bdotn_surf[..., None]})
-curves_to_vtk(curves, os.path.join(OUT_DIR, 'stage2_curves_opt'), close=True)
-biotsavart.save(os.path.join(OUT_DIR, 'stage2_biotsavart_opt.json'))
-
-# Save BoozerSurface for downstream singlestage warm-start
+# Save BoozerSurface (canonical output — contains BiotSavart + Surface)
 boozersurface.save(os.path.join(OUT_DIR, 'stage2_boozersurface_opt.json'))
 
 proc0_print(f'Diagnostics saved to {DIAGNOSTICS_FILE}')

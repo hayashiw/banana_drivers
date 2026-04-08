@@ -1,10 +1,10 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-07
+Last updated: 2026-04-08
 
 ## Current Status
 
-**Phase: Implementing three-stage pipeline (stage 1 VMEC optimization in progress).**
+**Phase: Three-stage pipeline implemented; stage 1 runs, production run and end-to-end validation pending.**
 
 BoozerLS initialization diagnosed as a **wrong-basin problem** — diagnostic sweep (job 51175067) confirmed BoozerLS converges to iota~0.002 regardless of iota_init (0.15, 0.05, 0.01), with `success=True` and `||grad||=0`. The solver finds a valid least-squares minimum, just the wrong one. No parameter tuning will fix this.
 
@@ -12,9 +12,13 @@ BoozerLS initialization diagnosed as a **wrong-basin problem** — diagnostic sw
 ```
 01_stage1 (VMEC QA opt) → 02_stage2 (coil opt) → 03_singlestage (joint opt)
 ```
-Implementation in progress — `utils/init_boozersurface.py` and `config.yaml` stage1 section complete; `01_stage1_driver.py` and driver renumbering pending.
+Implementation complete. Stage 1 production run (job 51191618, 10m15s) converged: aspect 6.450, iota 0.150, QS 8.5e-5. Volume drifted 0.577→0.643 without constraint — volume targeting now added (volume_weight=1.0, needs re-run).
 
-Stage 2 converged (job 51108936/51121626, banana current hit 16 kA bound). Output routing to `$SCRATCH/banana_drivers_outputs/` complete with archive.sh for preservation.
+Stage 2 with stage-1 equilibrium (job 51193701, 4m19s) converged: PGTOL satisfied, 347 iter, squared flux 1.33e-4, banana current 20.89 kA (unbounded).
+
+Singlestage (job 51195002) still converges to iota~0.022 — wrong-basin problem persists. Fixed: singlestage now uses stage 1 optimized wout (was using seed wout). Needs re-test after this fix + stage 1 re-run with volume targeting.
+
+Output file pruning applied to stage 2 and singlestage drivers — VTK and subset JSON saves removed; boozersurface JSON is the single canonical output per stage (matching qi_drivers pattern).
 
 ## Immediate Priority: Baseline at Single Resolution
 
@@ -64,11 +68,11 @@ Once baseline converges at single resolution:
 ### Three-stage pipeline implementation (approved plan in progress)
 - [x] **Create `utils/init_boozersurface.py`** — Refactored from `00_init_driver.py` into importable functions + CLI mode. Functions: `build_tf_coils`, `build_banana_coils`, `load_vmec_surface`, `assemble_boozersurface`, `build_and_save`.
 - [x] **Update `config.yaml`** — Added `stage1` section (resolution ramp, QA targets, cold start params), updated warm_start paths and header for new numbering.
-- [ ] **Create `01_stage1_driver.py`** — VMEC fixed-boundary optimization targeting QA (M=1, N=0). Warm start (from existing wout) and cold start (programmatic boundary) modes. Uses `Boozer` + `Quasisymmetry` + `least_squares_mpi_solve` with resolution ramp. Calls `build_and_save` at end to produce `boozersurface.init.json`. Env var overrides: `BANANA_IOTA`, `BANANA_VOLUME` for Pareto.
-- [ ] **Rename drivers** — `01_stage2_driver.py` → `02_stage2_driver.py`, `02_singlestage_driver.py` → `03_singlestage_driver.py`, delete `00_init_driver.py`.
-- [ ] **Update `submit.sh`** — Renumber shorthand (01→stage1, 02→stage2, 03→singlestage), add `NTASKS` variable for MPI, add stage1 SLURM settings (NTASKS=16, TIME=2h).
-- [ ] **Update `run_driver.sh`** — Add `srun` detection: `if SLURM_NTASKS > 1 then srun python else python`.
-- [ ] **Update README.md** — Pipeline table, three-stage workflow, fix SIMSOPT fork reference (`hayashiw/simsopt` branch `whjh/auglag_banana`, not jhalpern30).
+- [x] **Create `01_stage1_driver.py`** — VMEC fixed-boundary optimization targeting QA (M=1, N=0). Warm start (from existing wout) and cold start (programmatic boundary) modes. Uses `Boozer` + `Quasisymmetry` + `least_squares_mpi_solve` with resolution ramp. Calls `build_and_save` at end to produce `boozersurface.init.json`. Env var overrides: `BANANA_IOTA`, `BANANA_VOLUME` for Pareto.
+- [x] **Rename drivers** — `01_stage2_driver.py` → `02_stage2_driver.py`, `02_singlestage_driver.py` → `03_singlestage_driver.py`, delete `00_init_driver.py`.
+- [x] **Update `submit.sh`** — Renumber shorthand (01→stage1, 02→stage2, 03→singlestage), add `NTASKS` variable for MPI, add stage1 SLURM settings (NTASKS=16, TIME=2h).
+- [x] **Update `run_driver.sh`** — Add `srun` detection: `if SLURM_NTASKS > 1 then srun python else python`.
+- [x] **Update README.md** — Pipeline table, three-stage workflow, fix SIMSOPT fork reference.
 
 ### Other
 - [ ] **Fix submit.sh fallback logic** — Debug-to-regular continuation should cancel the regular job if debug fails or is cancelled, not just on timeout.
@@ -106,6 +110,11 @@ Record results of optimization runs here as they are conducted.
 | 2026-04-07 | jhalpern30 example s2 (accessibility) | nphi=255, ntheta=64 | 100 | 10→10 | N/A (coil-only) | converged (7 iter) | SLURM 51168974; `sims_banana_test` env. FACTR convergence after only 7 iter. Jf=1.1e-3 (20x worse than our s2). Banana current unchanged (ratio=0.100). Coils barely optimized. |
 | 2026-04-07 | jhalpern30 example SS (accessibility) | mpol=8 | 100 | 10 | BoozerLS | failed (init) | SLURM 51171203; `sims_banana_test` env, accessibility branch simsopt. BFGS iota=-1.4e-5, Newton iota=-644. **Same failure as our fork.** Rules out SIMSOPT fork as root cause. |
 | 2026-04-07 | BoozerLS diagnostic sweep | mpol=8, ntor=6 | 100 | 20.96 | BoozerLS | **wrong basin** | SLURM 51175067 (prev 51173004 timed out). 3/15 tests completed before timeout. All iota_init values (0.15, 0.05, 0.01) converge to iota~0.002, G~2.511 with `success=True, ||grad||=0`. BoozerLS consistently finds a valid LS minimum at the wrong iota. Confirms wrong-basin problem — no parameter tuning will fix this. Motivated three-stage pipeline with stage 1 VMEC optimization. |
+| 2026-04-07 | Stage 1 debug test (max_nfev=10) | mpol 3→5, ntor 3→5 | — | — | N/A (VMEC) | **success** | SLURM 51190374; 1m55s. Aspect 6.448 (target 6.45), iota_axis 0.1495, iota_edge 0.1492 (target 0.15). QS metric 1.3e-3 → 1.8e-4 across 3 resolution steps. Produced `stage1_wout_opt.nc` + `boozersurface.init.json`. Earlier runs failed: 51188120 (vmec.indata AttributeError — Vmec(wout) is non-runnable), 51188630/51189441/51189868 (Quasisymmetry.J() returns array, not scalar — format string crash). |
+| 2026-04-07 | Stage 1 production (max_nfev=50) | mpol 3→5, ntor 3→5 | — | — | N/A (VMEC) | failed (fort.9 race) | SLURM 51190920; 1m56s, exit 143 (SIGTERM). MPI ranks sharing cwd race on VMEC's `fort.9` Fortran unit file. Fix: per-group temp directories in scratch. |
+| 2026-04-07 | Stage 1 production (per-group dirs) | mpol 3→5, ntor 3→5 | — | — | N/A (VMEC) | **success** | SLURM 51191618; 10m15s. Aspect 6.4500 (err 3.4e-5), iota_axis 0.14989 (err 1.1e-4), iota_edge 0.14955 (err 4.5e-4). QS 1.3e-3 → 2.7e-4 → 8.5e-5 across 3 steps. Volume drifted 0.577→0.643 (no volume constraint). 317 VMEC iterations total. |
+| 2026-04-08 | Stage 2 (stage-1 equil, no cap) | nphi=255, ntheta=64 | 100 | 10→20.89 | N/A (coil-only) | **converged** | SLURM 51193701; 4m19s, 347 iter, PGTOL converged. Squared flux 1.33e-4. Banana current unbounded to 20.89 kA. |
+| 2026-04-08 | Singlestage (stage-1 equil) | mpol=8, ntor=6 | 100 | 20.89 | BoozerLS | **wrong basin** | SLURM 51195002; BFGS iota=0.022, same wrong-basin problem. Singlestage was using seed wout instead of stage 1 wout — fixed (wout_filepath → stage1_wout_filename). Needs re-test. |
 
 ## What Didn't Work
 

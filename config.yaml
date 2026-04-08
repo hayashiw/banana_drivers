@@ -88,6 +88,7 @@ stage1:
   # Objective weights
   aspect_weight: 1.0
   iota_weight: 1.0
+  volume_weight: 1.0
   qs_weight: 1.0
 
   # Cold start boundary shape (only used when cold_start=true)

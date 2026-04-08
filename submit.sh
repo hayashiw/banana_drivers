@@ -22,8 +22,9 @@ Usage: ./submit.sh <driver> [mode|walltime] [options...]
        ./submit.sh poincare <input.json> [mode|walltime] [extra args...]
 
 Drivers:
-    01  01_stage2           Stage 2 coil-only optimization (1h regular)
-    02  02_singlestage      Single-stage joint optimization (5h regular)
+    01  01_stage1           Stage 1 VMEC QA optimization (2h regular, MPI)
+    02  02_stage2           Stage 2 coil-only optimization (1h regular)
+    03  03_singlestage      Single-stage joint optimization (5h regular)
 
 Poincare:
     poincare <input.json>   Poincare field-line tracing (32 MPI ranks)
@@ -39,12 +40,13 @@ Custom walltime (auto-selects QOS based on duration):
     <= 30min → debug QOS;  > 30min → regular QOS
 
 Examples:
-    ./submit.sh 01                    # stage 2, auto mode
-    ./submit.sh 02 regular            # single-stage, regular queue
-    ./submit.sh 02 2h                 # single-stage, 2h walltime (regular)
-    ./submit.sh 01 30m                # stage 2, 30min (debug)
-    ./submit.sh 01 1h30m              # stage 2, 1h30m (regular)
-    ./submit.sh 01_stage2 debug       # stage 2, debug only
+    ./submit.sh 01                    # stage 1 VMEC, auto mode (MPI)
+    ./submit.sh 02                    # stage 2, auto mode
+    ./submit.sh 03 regular            # single-stage, regular queue
+    ./submit.sh 03 2h                 # single-stage, 2h walltime (regular)
+    ./submit.sh 02 30m                # stage 2, 30min (debug)
+    ./submit.sh 02 1h30m              # stage 2, 1h30m (regular)
+    ./submit.sh 02_stage2 debug       # stage 2, debug only
     ./submit.sh poincare $SCRATCH/banana_drivers_outputs/stage2_boozersurface_opt.json
     ./submit.sh poincare $SCRATCH/banana_drivers_outputs/stage2_boozersurface_opt.json 15m --quick
     ./submit.sh poincare $SCRATCH/banana_drivers_outputs/singlestage_boozersurface_opt.json regular --tol 1e-9
@@ -175,23 +177,31 @@ MODE_ARG="${2:-auto}"
 
 # ── Expand shorthand numbers to full driver names ───────────────────────────
 case "$DRIVER" in
-    01) DRIVER="01_stage2" ;;
-    02) DRIVER="02_singlestage" ;;
+    01) DRIVER="01_stage1" ;;
+    02) DRIVER="02_stage2" ;;
+    03) DRIVER="03_singlestage" ;;
 esac
 
 # ── Per-driver SLURM overrides ──────────────────────────────────────────────
 case "$DRIVER" in
-    01_stage2)
+    01_stage1)
+        TIME="02:00:00"
+        CPUS=1
+        NTASKS=16
+        ;;
+    02_stage2)
         TIME="01:00:00"
         CPUS=1
+        NTASKS=1
         ;;
-    02_singlestage)
+    03_singlestage)
         TIME="05:00:00"
         CPUS=1
+        NTASKS=1
         ;;
     *)
         echo "Error: unknown driver '$DRIVER'" >&2
-        echo "Available: 01_stage2, 02_singlestage" >&2
+        echo "Available: 01_stage1, 02_stage2, 03_singlestage" >&2
         exit 1
         ;;
 esac
@@ -219,11 +229,13 @@ SBATCH_COMMON=(
     --export="ALL,DRIVER=${DRIVER}"
     --job-name="$JOB_NAME"
     --output="${SHORT_NAME}_%j.log"
+    --ntasks="$NTASKS"
     --cpus-per-task="$CPUS"
     run_driver.sh
 )
 
 echo "Driver:   $DRIVER"
+echo "Tasks:    $NTASKS"
 echo "CPUs:     $CPUS"
 if [[ "$MODE" == "custom" ]]; then
     echo "Walltime: $CUSTOM_TIME ($CUSTOM_QOS)"

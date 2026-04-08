@@ -45,8 +45,14 @@ source /global/common/software/nersc/pe/conda/26.1.0/Miniforge3-25.11.0-1/etc/pr
 conda activate sims_banana_env
 
 # ── Run with log capture ─────────────────────────────────────────────────────
+# Use srun for MPI drivers (SLURM_NTASKS > 1), bare python otherwise
 set +e
-python "$DRIVER_PY" 2>&1 | tee "$LOG_FILE"
+if [[ "${SLURM_NTASKS:-1}" -gt 1 ]]; then
+    echo "MPI mode: srun -n ${SLURM_NTASKS} python $DRIVER_PY"
+    srun python "$DRIVER_PY" 2>&1 | tee "$LOG_FILE"
+else
+    python "$DRIVER_PY" 2>&1 | tee "$LOG_FILE"
+fi
 PY_EXIT_CODE=${PIPESTATUS[0]}
 set -e
 

@@ -1,15 +1,17 @@
 """
-02_singlestage_driver.py
+03_singlestage_driver.py
 ────────────────────────
-Single-stage joint coil + surface optimization for the banana coil
+Stage 3 (singlestage) joint coil + surface optimization for the banana coil
 stellarator-tokamak hybrid using BoozerLS.
 
 Jointly optimizes banana coil DOFs and plasma surface Fourier coefficients
 to minimize NonQuasiSymmetricRatio + BoozerResidual + geometric penalties
 using L-BFGS-B.
 
+Pipeline:  01_stage1 -> 02_stage2 -> 03_singlestage (this)
+
 Usage:
-    python 02_singlestage_driver.py
+    python 03_singlestage_driver.py
 """
 import atexit
 import numpy as np
@@ -39,7 +41,6 @@ from simsopt.geo import (
     SurfaceXYZTensorFourier,
     Volume,
     boozer_surface_residual,
-    curves_to_vtk,
 )
 from simsopt.objectives import QuadraticPenalty
 from simsopt._core.optimizable import Optimizable
@@ -109,7 +110,7 @@ NPHI   = cfg['plasma_surface']['nphi']
 NTHETA = cfg['plasma_surface']['ntheta']
 VMEC_S = cfg['plasma_surface']['vmec_s']
 VMEC_R = cfg['plasma_surface']['vmec_R']
-WOUT_FILE = os.path.abspath(cfg['warm_start']['wout_filepath'])
+WOUT_FILE = os.path.join(OUT_DIR, cfg['warm_start']['stage1_wout_filename'])
 
 # Objective thresholds (hardware constraints — not relaxable)
 CC_THRESHOLD   = cfg['thresholds']['coil_coil_min']
@@ -262,11 +263,6 @@ if not success:
     raise RuntimeError("Initial Boozer surface solve failed")
 
 biotsavart.set_points(surface.gamma().reshape((-1, 3)))
-Bbs = biotsavart.B().reshape(surface.gamma().shape)
-Bdotn_surf = np.sum(Bbs * surface.unitnormal(), axis=-1)
-surface.to_vtk(os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_surf_init'), extra_data={"B_N": Bdotn_surf[..., None]})
-curves_to_vtk(curves, os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_curves_init'), close=True)
-biotsavart.save(os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_biotsavart_init.json'))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -623,14 +619,8 @@ FINAL STATE (MPOL={MPOL}) ──────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 # Save final outputs
 # ──────────────────────────────────────────────────────────────────────────────
+# Save BoozerSurface (canonical output — contains BiotSavart + Surface)
 boozersurface.save(os.path.join(OUT_DIR, f"{OUTPUT_PREFIX}_boozersurface_opt.json"))
-curves_to_vtk(curves, os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_coils_opt'))
-
-Bdotn = np.sum(biotsavart.B().reshape(surface.gamma().shape) * surface.unitnormal(), axis=-1)
-modB  = np.linalg.norm(biotsavart.B().reshape(surface.gamma().shape), axis=-1)
-surface.to_vtk(os.path.join(OUT_DIR, f'{OUTPUT_PREFIX}_surf_opt'), extra_data={
-    "B_N": Bdotn[..., None], "B_N/|B|": (Bdotn/modB)[..., None],
-})
 np.savez(os.path.join(OUT_DIR, f"{OUTPUT_PREFIX}_state_opt.npz"),
          iota=boozersurface.res["iota"], G=boozersurface.res["G"])
 

@@ -21,12 +21,13 @@ These coil designs are intended to be manufactured.
 All drivers are submitted via `submit.sh`, which handles SLURM queue selection and per-driver settings:
 
 ```bash
-./submit.sh 01                       # stage 2 (auto: debug → regular fallback)
-./submit.sh 02 regular               # single-stage (regular queue only)
-./submit.sh 02_singlestage debug     # single-stage (debug queue only)
+./submit.sh 01                       # stage 1 VMEC QA (auto: debug → regular fallback, MPI)
+./submit.sh 02                       # stage 2 coil-only (auto mode)
+./submit.sh 03 regular               # single-stage (regular queue only)
+./submit.sh 03_singlestage debug     # single-stage (debug queue only)
 ```
 
-`run_driver.sh` is the generic SLURM batch script called by `submit.sh`. It finds `${DRIVER}_driver.py`, runs it, and moves logs to the output directory printed by the driver's `atexit` handler (`OUT_DIR=...`).
+`run_driver.sh` is the generic SLURM batch script called by `submit.sh`. It finds `${DRIVER}_driver.py`, runs it with `srun` when MPI tasks > 1, and moves logs to the output directory printed by the driver's `atexit` handler (`OUT_DIR=...`).
 
 ## Scripts
 
@@ -34,20 +35,23 @@ All drivers are submitted via `submit.sh`, which handles SLURM queue selection a
 
 | # | Script | Purpose | Inputs | Outputs |
 |---|--------|---------|--------|---------|
-| 01 | `01_stage2_driver.py` | Stage 2: fixed plasma boundary, optimize banana coil shape (SquaredFlux + geometric penalties) | wout, TF+banana coil params | `outputs/stage2_biotsavart_opt.json` |
-| 02 | `02_singlestage_driver.py` | Single-stage: jointly optimize coil shapes and plasma boundary (BoozerLS + penalties) | stage2 BiotSavart, surface init | `outputs/singlestage_*` |
+| 01 | `01_stage1_driver.py` | Stage 1: VMEC fixed-boundary QA optimization ($M=1$, $N=0$) with resolution ramp. MPI required. | seed wout (warm) or config (cold) | `stage1_wout_opt.nc`, `inputs/boozersurface.init.json` |
+| 02 | `02_stage2_driver.py` | Stage 2: fixed plasma boundary, optimize banana coil shape (SquaredFlux + geometric penalties) | `boozersurface.init.json` | `stage2_boozersurface_opt.json` |
+| 03 | `03_singlestage_driver.py` | Stage 3: jointly optimize coil shapes and plasma boundary (BoozerLS + penalties) | stage 2 BoozerSurface | `singlestage_boozersurface_opt.json` |
 
-### Candidate Pipeline Steps (unnumbered)
+### Unnumbered Drivers
 
 | Script | Purpose | Status |
 |--------|---------|--------|
-| `boozxform_driver.py` | Run Booz_xform to extract Boozer-coordinate surface + equilibrium iota/G | Will be numbered once pipeline position is confirmed |
-| `vmec_resize_driver.py` | Resize VMEC LCFS to match target plasma dimensions | May be superseded by stage 1 driver |
+| `boozxform_driver.py` | Run booz_xform to extract Boozer-coordinate surface + equilibrium iota/G | Diagnostic tool |
+| `vmec_resize_driver.py` | Resize VMEC LCFS to match target plasma dimensions | Superseded by stage 1 |
 
 ### Utilities (`utils/`)
 
 | Script | Purpose |
 |--------|---------|
+| `utils/init_boozersurface.py` | Build TF+banana coils and plasma surface, assemble BoozerSurface. Importable functions + standalone CLI. |
+| `utils/output_dir.py` | Resolve output directory: `$BANANA_OUT_DIR` → `$SCRATCH/banana_drivers_outputs/` → `./outputs/` |
 | `utils/post_process.py` | Extract physics metrics from optimized BoozerSurface files, append to CSV |
 | `utils/generate_vf_coils.py` | Generate VF coil BiotSavart for finite-current cases → `inputs/vf_biotsavart.json` |
 
@@ -85,15 +89,15 @@ Legacy files, temp-hold drivers, and the master prompt live in `local/`.
 
 ---
 
-## Three-Stage Workflow (Planned)
+## Three-Stage Workflow
 
 ```
-Stage 1 (VMEC at correct boundary)  -->  booz_xform  -->  Stage 2  -->  Single-stage
+01_stage1 (VMEC QA opt) → 02_stage2 (coil opt) → 03_singlestage (joint opt)
 ```
 
-- Stage 1: perturbed optimization of existing wout for varying volume/iota targets
-- vmec_resize becomes unnecessary once stage 1 is operational
-- Pareto front scans over banana current, volume, and iota targets
+- **Stage 1**: VMEC fixed-boundary optimization targeting quasi-axisymmetry ($M=1$, $N=0$). Resolution ramp over boundary Fourier modes. Warm start from existing wout or cold start for Pareto scans over iota/volume targets (`BANANA_IOTA`, `BANANA_VOLUME` env vars). Produces optimized wout + `boozersurface.init.json`.
+- **Stage 2**: Coil-only optimization (SquaredFlux + geometric penalties). Banana coil shape and current DOFs only; TF coils fixed. L-BFGS-B with optional current cap.
+- **Stage 3 (singlestage)**: Joint coil + surface optimization using BoozerLS. Minimizes NonQuasiSymmetricRatio + BoozerResidual + geometric penalties.
 
 ---
 
@@ -101,12 +105,13 @@ Stage 1 (VMEC at correct boundary)  -->  booz_xform  -->  Stage 2  -->  Single-s
 
 | Directory | Contents |
 |-----------|---------|
-| `outputs/` | All pipeline outputs: `stage2_*`, `singlestage_*` files (BiotSavart JSON, VTK, diagnostics) |
+| `$SCRATCH/banana_drivers_outputs/` | Primary output location (NERSC scratch, 8-week purge). All pipeline outputs: wout, BoozerSurface JSON, VTK, diagnostics. |
+| `outputs/` | Fallback when `$SCRATCH` unavailable. Also the archive target for `archive.sh`. |
 
 ---
 
 ## Environment
 
 - **HPC**: Perlmutter @ NERSC (128 CPUs per node, SLURM scheduler)
-- **SIMSOPT fork**: `jhalpern30/simsopt` on `accessibility` branch
+- **SIMSOPT fork**: `hayashiw/simsopt` on `whjh/auglag_banana` branch (local: `hybrid_torus/banana/simsopt/`)
 - **Related repo**: `qi_rso/qi_drivers/` (separate project, shared practices only)

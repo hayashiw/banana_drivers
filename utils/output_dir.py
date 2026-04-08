@@ -27,8 +27,8 @@ def resolve_output_dir():
         candidate = os.path.join(scratch, SCRATCH_SUBDIR)
         try:
             os.makedirs(candidate, exist_ok=True)
-            # Verify writable
-            test_file = os.path.join(candidate, ".write_test")
+            # Verify writable (use PID in filename to avoid MPI rank races)
+            test_file = os.path.join(candidate, f".write_test_{os.getpid()}")
             with open(test_file, "w") as f:
                 f.write("")
             os.remove(test_file)

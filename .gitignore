@@ -105,5 +105,14 @@ local/
 slurm-*.out
 slurm-*.err
 
+# VMEC runtime files (written to cwd by Fortran code)
+fort.*
+input.default_*
+wout_default_*
+jac_log_*.dat
+objective_*.dat
+parvmecinfo.txt
+threed1.*
+
 # Post process files
 *.csv
