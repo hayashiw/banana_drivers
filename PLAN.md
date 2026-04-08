@@ -1,6 +1,6 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-08
+Last updated: 2026-04-08 (ALM ported to stage 2; dual-mode selector added; singlestage ALM port deferred)
 
 ## Current Status
 
@@ -19,6 +19,8 @@ Stage 2 with stage-1 equilibrium (job 51193701, 4m19s) converged: PGTOL satisfie
 Singlestage (job 51195002) still converges to iota~0.022 — wrong-basin problem persists. Fixed: singlestage now uses stage 1 optimized wout (was using seed wout). Needs re-test after this fix + stage 1 re-run with volume targeting.
 
 Output file pruning applied to stage 2 and singlestage drivers — VTK and subset JSON saves removed; boozersurface JSON is the single canonical output per stage (matching qi_drivers pattern).
+
+**Stage 2 ALM port (2026-04-08):** After the volume-constrained stage 1 equilibrium broke fixed-weight stage 2 (job 51219280 hit the LpCurvCurv penalty cliff) and the two-phase warmup attempt failed catastrophically (job 51221431), the augmented Lagrangian method was ported from `qi_drivers`. Stage 2 now supports a `stage2_mode` config key (`alm` default, `weighted` legacy). ALM mode uses the Wechsung et al. pattern: `f=None` with SquaredFlux and all geometric penalties in the constraint list. Outer loop ramps per-constraint penalty weights $\mu_i$ and updates Lagrange multipliers $\lambda_i$; inner loop is L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs. Next: validate on the failing case (job 51217973's boozersurface.init.json).
 
 ## Immediate Priority: Baseline at Single Resolution
 
@@ -83,9 +85,39 @@ Once baseline converges at single resolution:
 - [x] **Test accessibility branch simsopt** — Job 51171203. Same BoozerLS failure as our fork. Rules out fork changes as cause.
 - [x] **BoozerLS diagnostic sweep** — Job 51175067 (partial: 3/15 tests before timeout). All tested iota_init values (0.15, 0.05, 0.01) converge to iota~0.002 with `success=True, ||grad||=0`. Confirms wrong-basin problem — BoozerLS finds a valid minimum at the wrong iota. This motivated the three-stage pipeline approach.
 
-## Deferred
+## Augmented Lagrangian Method (ALM) — Stage 2 port complete
 
-- **ALM integration** — Wait for validation in qi_drivers, then port. Drivers should be structured to accommodate the outer-loop pattern.
+**Motivation.** Stage 2 job 51219280 (2026-04-08) failed because L-BFGS-B's initial descent direction from a fresh `boozersurface.init.json` walked into the `LpCurvCurv` penalty cliff. The `p=4` curvature penalty with threshold 20 m⁻¹ creates a sharp nonlinear wall; once the optimizer is on the wall at iter 74, the recommended step blew J up by 14 orders of magnitude (9.6e-4 → 5.3e+10), line search could not recover, and the run terminated at machine precision with large gradient. This is starting-point-sensitive and not robust enough for Pareto scans.
+
+**Dead end — two-phase warmup (Option B).** Before ALM, a temporary two-phase driver was tried: Phase 1 minimized `SquaredFlux` alone (no penalty walls), Phase 2 enabled the full weighted objective. Phase 1 let the coils grow 11× unconstrained (length 0.89 → 9.87 m, CC collapse to 4.2 mm, curvature 2197 m⁻¹); Phase 2 could not recover. `SquaredFlux` alone is pathologically unbounded — this approach is dead. See job 51221431.
+
+**ALM approach.** Following the Wechsung et al. stage-2 paper, set `f=None` and place **all** objectives — including SquaredFlux — in the constraint list. ALM treats each as an equality-style residual, ramps per-constraint penalty weights $\mu_i$ in an outer loop, and updates Lagrange multipliers $\lambda_i$ as constraints become satisfied. The effective weight on each constraint's gradient is $(\mu_i c_i - \lambda_i)$, analogous to $w_i$ in a traditional weighted objective. Inner loop is L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs.
+
+### Stage 2 port — done
+
+- [x] **Copy `augmented_lagrangian.py`** from `qi_rso/simsopt` to `banana/simsopt/src/simsopt/solve/` and export from `solve/__init__.py`. `threadpoolctl` installed via conda.
+- [x] **Add `stage2_alm` section to `config.yaml`**: `mu_init`, `tau`, `maxiter`, `maxfun`, `maxiter_lag`, `grad_tol`, `c_tol`, `dof_scale`.
+- [x] **Add `stage2_mode` selector** (`alm` default, `weighted` legacy). Restored `stage2_optimizer` (L-BFGS-B params) and `stage2_weights` sections for the legacy path.
+- [x] **Rewrite `02_stage2_driver.py` with dual-mode branching** — objective definition, optimization call, termination summary all branch on `STAGE2_MODE`. ALM path uses `f=None`, constraint list `[Jsqf, Jl, Jcc, Jcurv]`, and `callback_alm(x, k)`. Mode-aware print helper (`_objective_lines`) reports "Objective J (weighted)" vs "Constraint ‖c‖∞" depending on mode.
+- [x] **ALM summary JSON** (`stage2_alm_summary.json`): per-constraint `(c, λ, μ, w_eff)`, convergence flags, final $L_A$, banana current.
+- [x] **Env var overrides**: `BANANA_TAU`, `BANANA_MAXITER_LAG`, `BANANA_STAGE2_MODE` for Pareto scans.
+- [x] **Delete two-phase warmup scaffolding** (`JF_sqf_only`, `phase1_maxiter`, all `TODO(ALM)` markers removed).
+- [ ] **Validate on the failing case** — re-run stage 2 with the job-51217973 `boozersurface.init.json` that triggered 51219280's blowup. Success criteria: $\|c\|_\infty \le c_\text{tol}$ and physically reasonable coil geometry (length ≤ 1.75 m, CC ≥ 0.05 m, curv ≤ 40 m⁻¹, current ≤ 16 kA).
+
+### TODO: Port ALM to singlestage
+
+Marked with a `TODO(ALM)` note in the `03_singlestage_driver.py` docstring. Same motivation as stage 2: the singlestage driver uses the same `LpCurvCurv` penalty and current penalty patterns and is therefore vulnerable to the same penalty-cliff failure mode. qi_drivers already uses ALM for its singlestage driver (`qi_drivers/02_singlestage_driver.py`) — direct reference implementation. Should add a `singlestage_mode` config key mirroring `stage2_mode` so the legacy weighted path stays available as a fallback.
+
+Concrete steps when porting:
+- [ ] Add `singlestage_mode`, `singlestage_alm` sections to `config.yaml`. Preserve existing `singlestage_optimizer` and `singlestage_weights`.
+- [ ] Build constraint list: at minimum `[Jnonqs, Jboozres, Jiota, Jl, Jccdist, Jcurv, Jcsdist, Jcurrent]`. Order matters for summary JSON indexing.
+- [ ] Replace `minimize(...)` with `augmented_lagrangian_method(f=None, equality_constraints=[...], ...)` in the ALM branch; keep `minimize(...)` in the weighted branch.
+- [ ] Adapt the rollback-on-Boozer-failure logic in `fun(x)` to work with ALM's inner minimizer — qi_drivers handles this via a wrapper that returns a large constant + zero gradient when the Boozer solve fails.
+- [ ] ALM callback signature is `callback(x, k)` (outer iter). Adapt the current iteration diagnostics accordingly.
+- [ ] Decide `dof_scale` — qi_drivers uses 0.1 to keep coil perturbations small enough for the Boozer Newton solver to stay in its convergence basin. Singlestage is much more sensitive to this than stage 2 (surface is being optimized jointly).
+- [ ] Validate on the full three-stage pipeline: does ALM singlestage improve convergence from the BoozerLS wrong-basin starting point, or is ALM orthogonal to that issue?
+
+## Deferred
 - **BoozerExact** — Revisit if stochastic optimization is needed or if BoozerLS residuals are insufficient.
 - **Booz_xform initialization diagnosis** — Understand why the theoretically correct initialization failed (G mismatch? stage 2 coil field divergence from VMEC equilibrium?).
 - **BoozerSurface save/load with run_code result** — `GSONable.as_dict()` only serializes `__init__` args; `self.res` (iota, G, converged DOFs, residual) from `run_code()` is lost. Workaround: sidecar `.npz` files + `--iota-target`/`--G-sign` CLI args in post_process. Fix: override `as_dict`/`from_dict` in SIMSOPT fork `boozersurface.py` to include serializable parts of `self.res` (skip PLU/vjp); set `need_to_run_code = False` on load. Do before Pareto scan. Benefits both projects.
@@ -115,6 +147,9 @@ Record results of optimization runs here as they are conducted.
 | 2026-04-07 | Stage 1 production (per-group dirs) | mpol 3→5, ntor 3→5 | — | — | N/A (VMEC) | **success** | SLURM 51191618; 10m15s. Aspect 6.4500 (err 3.4e-5), iota_axis 0.14989 (err 1.1e-4), iota_edge 0.14955 (err 4.5e-4). QS 1.3e-3 → 2.7e-4 → 8.5e-5 across 3 steps. Volume drifted 0.577→0.643 (no volume constraint). 317 VMEC iterations total. |
 | 2026-04-08 | Stage 2 (stage-1 equil, no cap) | nphi=255, ntheta=64 | 100 | 10→20.89 | N/A (coil-only) | **converged** | SLURM 51193701; 4m19s, 347 iter, PGTOL converged. Squared flux 1.33e-4. Banana current unbounded to 20.89 kA. |
 | 2026-04-08 | Singlestage (stage-1 equil) | mpol=8, ntor=6 | 100 | 20.89 | BoozerLS | **wrong basin** | SLURM 51195002; BFGS iota=0.022, same wrong-basin problem. Singlestage was using seed wout instead of stage 1 wout — fixed (wout_filepath → stage1_wout_filename). Needs re-test. |
+| 2026-04-08 | Stage 1 (volume-constrained) | mpol 3→5, ntor 3→5 | — | — | N/A (VMEC) | **success** | SLURM 51217973; 9m57s. Aspect 6.4504, iota 0.1497, volume 0.5783 (target 0.5767, err 0.3% vs 11% without constraint). QS 1.88e-4. s=0.24 slice volume 0.0949 m³ ≈ singlestage target 0.10. |
+| 2026-04-08 | Stage 2 (volume-constrained stage 1) | nphi=255, ntheta=64 | 100 | 10→9.97 | N/A (coil-only) | **failed (penalty cliff)** | SLURM 51219280; 2m00s, FTOL termination at iter 74/500. Init sq flux 1.41e-3 → final 9.58e-4 (only 32% reduction vs 100x yesterday). Length 0.89→0.54 m (coils shrank), curv 9.1→41.4 m⁻¹ (2x over 20 m⁻¹ soft limit). Iter 74 recommended step blew J to 5.3e+10 (curv 66504); line search backtracked to prior point, RR < 1e-15 triggered FTOL. Root cause: 2% surface dof change from volume-constrained stage 1 flipped L-BFGS-B's initial descent direction from "grow coils" (yesterday) to "shrink coils" (today), walking into LpCurvCurv cliff. maxcor=300 is standard for simsopt coil optimization (all examples use 300-400). Fix: two-phase stage 2 warmup (phase 1 = SquaredFlux only, phase 2 = full objective); longer-term fix: port ALM from qi_drivers. |
+| 2026-04-08 | Stage 2 two-phase warmup (Option B) | nphi=255, ntheta=64 | 100 | 10→−0.82 | N/A (coil-only) | **failed (Phase 1 unbounded)** | SLURM 51221431. Phase 1 minimized SquaredFlux alone — coils grew 11× (length 0.89→9.87 m), CC collapsed to 4.2 mm, curv exploded to 2197 m⁻¹. Phase 2 could not recover: final banana current −0.82 kA, length 44.4 m. Lesson: SquaredFlux is pathologically unbounded as a solo objective; a free-running Phase 1 is not a viable warmup. Two-phase approach declared dead — go straight to ALM. |
 
 ## What Didn't Work
 
@@ -136,3 +171,4 @@ Document failed approaches here so they aren't repeated.
 | 2026-04-07 | jhalpern30 example on our simsopt fork | Example's single_stage_banana_example.py also fails (BFGS iota=-3e-6, Newton diverges to iota=-946). Same failure pattern as our drivers. | Initially suspected SIMSOPT fork — disproved by accessibility branch test (see below). |
 | 2026-04-07 | jhalpern30 example on accessibility branch | Identical BoozerLS failure (BFGS iota=-1.4e-5, Newton iota=-644). Job 51171203. | **SIMSOPT fork is NOT the cause.** The example's stage 2 only runs 7 iterations (Jf=1.1e-3, 20x worse than our stage 2). BoozerLS can't find iota=0.15 because the coils are barely optimized. The BoozerLS initialization issue is independent of which SIMSOPT branch is used. |
 | 2026-04-07 | BoozerLS parameter sweep (iota_init, G0, CW, vol, res) | All converge to iota~0.002 with `success=True, ||grad||=0`. Job 51175067 (3/15 tests before timeout). | **Wrong-basin problem, not parameter sensitivity.** BoozerLS finds a valid LS minimum at the wrong iota regardless of initialization. The two-stage pipeline (skip stage 1) is fundamentally flawed — need VMEC stage 1 to produce a self-consistent equilibrium. |
+| 2026-04-08 | Stage 2 two-phase warmup (SquaredFlux-only Phase 1 → full objective Phase 2) | Phase 1 grew banana coils 11× (length 0.89 → 9.87 m, CC collapsed to 4.2 mm, curv 2197 m⁻¹); Phase 2 could not recover (final current −0.82 kA, length 44.4 m). Job 51221431. | **SquaredFlux alone is pathologically unbounded.** A warmup that removes hardware penalties lets the optimizer blow up faster than the full objective would. Option B is dead — need ALM, not a warmup trick. |

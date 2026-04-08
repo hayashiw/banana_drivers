@@ -96,8 +96,10 @@ Legacy files, temp-hold drivers, and the master prompt live in `local/`.
 ```
 
 - **Stage 1**: VMEC fixed-boundary optimization targeting quasi-axisymmetry ($M=1$, $N=0$). Resolution ramp over boundary Fourier modes. Warm start from existing wout or cold start for Pareto scans over iota/volume targets (`BANANA_IOTA`, `BANANA_VOLUME` env vars). Produces optimized wout + `boozersurface.init.json`.
-- **Stage 2**: Coil-only optimization (SquaredFlux + geometric penalties). Banana coil shape and current DOFs only; TF coils fixed. L-BFGS-B with optional current cap.
-- **Stage 3 (singlestage)**: Joint coil + surface optimization using BoozerLS. Minimizes NonQuasiSymmetricRatio + BoozerResidual + geometric penalties.
+- **Stage 2**: Coil-only optimization (SquaredFlux + geometric penalties). Banana coil shape and current DOFs only; TF coils fixed. Two modes selectable via `stage2_mode` in `config.yaml`:
+  - `alm` (default) — augmented Lagrangian method following the Wechsung et al. stage-2 paper pattern. `f=None` with SquaredFlux and all geometric penalties (length ≤ 1.75 m, CC ≥ 0.05 m, curvature ≤ 40 m⁻¹) placed in the constraint list. Outer loop ramps per-constraint penalty weights $\mu_i$ and updates Lagrange multipliers $\lambda_i$; inner loop is L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs. Writes `stage2_alm_summary.json` with per-constraint $(c, \lambda, \mu, w_\text{eff})$.
+  - `weighted` (legacy) — fixed-weight L-BFGS-B on the scalar objective $J = J_\text{sqf} + w_l J_l + w_{cc} J_{cc} + w_\text{curv} J_\text{curv}$. Kept available for comparison and as a fallback; weights live in `stage2_weights`.
+- **Stage 3 (singlestage)**: Joint coil + surface optimization using BoozerLS. Minimizes NonQuasiSymmetricRatio + BoozerResidual + geometric penalties. Currently L-BFGS-B on a weighted objective; ALM port planned (see `TODO(ALM)` in `03_singlestage_driver.py` and `PLAN.md`).
 
 ---
 

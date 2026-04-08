@@ -12,6 +12,15 @@ Pipeline:  01_stage1 -> 02_stage2 -> 03_singlestage (this)
 
 Usage:
     python 03_singlestage_driver.py
+
+TODO(ALM): Port the augmented Lagrangian method to singlestage the same way
+stage 2 was ported (see ``02_stage2_driver.py``). Motivation: singlestage
+uses the same LpCurvCurv penalty that caused stage 2's penalty-cliff failure
+(job 51219280), and adding hardware-constraint robustness would remove the
+last remaining fixed-weight penalty wall in the pipeline. qi_drivers already
+uses ALM for its singlestage driver and can serve as the reference. The
+banana singlestage driver should expose a ``singlestage_mode`` config key
+mirroring ``stage2_mode`` so the legacy weighted path remains available.
 """
 import atexit
 import numpy as np

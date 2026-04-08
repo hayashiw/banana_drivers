@@ -118,21 +118,43 @@ thresholds:
   coil_surface_min: 0.02    # m — min coil-surface clearance
   curvature_max_ss: 20      # m^-1 — max curvature (singlestage, tighter)
 
-# ── Stage 2 objective weights ────────────────────────────────────────────────
+# ── Stage 2 mode selector ────────────────────────────────────────────────────
+# Which stage-2 solver to use:
+#   'alm'      — augmented Lagrangian method (default; constraint list, no cliffs)
+#   'weighted' — legacy fixed-weight L-BFGS-B (single weighted scalar objective)
+stage2_mode: alm
+
+# ── Stage 2 objective weights (legacy 'weighted' mode) ──────────────────────
 stage2_weights:
   squared_flux: 1.0e+0
   length: 5.0e-4
   coil_coil: 1.0e+2
   curvature: 1.0e-4
 
-# ── Stage 2 optimizer (L-BFGS-B) ────────────────────────────────────────────
+# ── Stage 2 optimizer (legacy 'weighted' mode, L-BFGS-B) ────────────────────
 stage2_optimizer:
-  maxiter: 500
+  maxiter: 1000
   maxcor: 300
   maxfun: 10000
   tol: 1.0e-15
   ftol: 1.0e-15
-  gtol: 1.0e-6
+  gtol: 1.0e-12
+
+# ── Stage 2 ALM (augmented Lagrangian method) ──────────────────────────────
+# Follows the Wechsung et al. stage-2 paper pattern: f=None and all objectives
+# (including SquaredFlux) live in the constraint list. ALM ramps per-constraint
+# penalty weights μᵢ in an outer loop and updates Lagrange multipliers λᵢ as
+# constraints become satisfied. Inner loop is L-BFGS-B on a smooth augmented
+# Lagrangian — no penalty cliffs.
+stage2_alm:
+  mu_init: 10.0        # initial penalty parameter (> 1; scalar applies to all)
+  tau: 4               # penalty growth factor for violated constraints
+  maxiter: 1000        # inner L-BFGS-B maxiter per outer step
+  maxfun: 10000        # inner L-BFGS-B maxfun per outer step
+  maxiter_lag: 50      # outer ALM iterations
+  grad_tol: 1.0e-12    # gradient norm convergence tolerance
+  c_tol: 1.0e-6        # constraint norm (inf) convergence tolerance
+  dof_scale: 1.0       # DOF step limiter (1.0 = no rescaling; reduce if inner line search struggles)
 
 # ── Singlestage objective weights ───────────────────────────────────────────
 singlestage_weights:
