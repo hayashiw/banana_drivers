@@ -35,8 +35,8 @@ All drivers are submitted via `submit.sh`, which handles SLURM queue selection a
 
 | # | Script | Purpose | Inputs | Outputs |
 |---|--------|---------|--------|---------|
-| 01 | `01_stage1_driver.py` | Stage 1: VMEC fixed-boundary QA optimization ($M=1$, $N=0$) with resolution ramp. MPI required. | seed wout (warm) or config (cold) | `stage1_wout_opt.nc`, `inputs/boozersurface.init.json` |
-| 02 | `02_stage2_driver.py` | Stage 2: fixed plasma boundary, optimize banana coil shape (SquaredFlux + geometric penalties) | `boozersurface.init.json` | `stage2_boozersurface_opt.json` |
+| 01 | `01_stage1_driver.py` | Stage 1: VMEC fixed-boundary QA optimization ($M=1$, $N=0$) with resolution ramp. MPI required. | seed wout (warm) or config (cold) | `wout_stage1.nc`, `boozmn_stage1.nc`, `inputs/stage1_boozersurface_opt.json` (+ copy in output dir) |
+| 02 | `02_stage2_driver.py` | Stage 2: fixed plasma boundary, optimize banana coil shape (SquaredFlux + geometric penalties) | `stage1_boozersurface_opt.json` | `stage2_boozersurface_opt.json` |
 | 03 | `03_singlestage_driver.py` | Stage 3: jointly optimize coil shapes and plasma boundary (BoozerLS + penalties) | stage 2 BoozerSurface | `singlestage_boozersurface_opt.json` |
 
 ### Unnumbered Drivers
@@ -95,9 +95,9 @@ Legacy files, temp-hold drivers, and the master prompt live in `local/`.
 01_stage1 (VMEC QA opt) → 02_stage2 (coil opt) → 03_singlestage (joint opt)
 ```
 
-- **Stage 1**: VMEC fixed-boundary optimization targeting quasi-axisymmetry ($M=1$, $N=0$). Resolution ramp over boundary Fourier modes. Warm start from existing wout or cold start for Pareto scans over iota/volume targets (`BANANA_IOTA`, `BANANA_VOLUME` env vars). Produces optimized wout + `boozersurface.init.json`.
+- **Stage 1**: VMEC fixed-boundary optimization targeting quasi-axisymmetry ($M=1$, $N=0$). Resolution ramp over boundary Fourier modes. Warm start from existing wout or cold start for Pareto scans over iota/volume targets (`BANANA_IOTA`, `BANANA_VOLUME` env vars). Produces optimized wout + `stage1_boozersurface_opt.json`.
 - **Stage 2**: Coil-only optimization (SquaredFlux + geometric penalties). Banana coil shape and current DOFs only; TF coils fixed. Two modes selectable via `stage2_mode` in `config.yaml`:
-  - `alm` (default) — augmented Lagrangian method following the Wechsung et al. stage-2 paper pattern. `f=None` with SquaredFlux and all geometric penalties (length ≤ 1.75 m, CC ≥ 0.05 m, curvature ≤ 40 m⁻¹) placed in the constraint list. Outer loop ramps per-constraint penalty weights $\mu_i$ and updates Lagrange multipliers $\lambda_i$; inner loop is L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs. Writes `stage2_alm_summary.json` with per-constraint $(c, \lambda, \mu, w_\text{eff})$.
+  - `alm` (default) — augmented Lagrangian method. `f=None` with SquaredFlux and all geometric penalties (length ≤ 1.75 m, CC ≥ 0.05 m, curvature ≤ 40 m⁻¹) placed in the constraint list. Outer loop ramps per-constraint penalty weights $\mu_i$ and updates Lagrange multipliers $\lambda_i$; inner loop is L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs. Writes `stage2_alm_summary.json` with per-constraint $(c, \lambda, \mu, w_\text{eff})$.
   - `weighted` (legacy) — fixed-weight L-BFGS-B on the scalar objective $J = J_\text{sqf} + w_l J_l + w_{cc} J_{cc} + w_\text{curv} J_\text{curv}$. Kept available for comparison and as a fallback; weights live in `stage2_weights`.
 - **Stage 3 (singlestage)**: Joint coil + surface optimization using BoozerLS. Minimizes NonQuasiSymmetricRatio + BoozerResidual + geometric penalties. Currently L-BFGS-B on a weighted objective; ALM port planned (see `TODO(ALM)` in `03_singlestage_driver.py` and `PLAN.md`).
 

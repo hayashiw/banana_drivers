@@ -17,8 +17,8 @@
 # against the output directory ($SCRATCH/banana_drivers_outputs/ or ./outputs/).
 warm_start:
   wout_filepath: "inputs/wout_nfp22ginsburg_000_014417_iota15.nc"       # seed wout for 01_stage1 warm start
-  init_bsurf_filepath: "inputs/boozersurface.init.json"                 # from 01_stage1
-  stage1_wout_filename: "stage1_wout_opt.nc"                            # from 01_stage1 (resolved against output dir)
+  init_bsurf_filepath: "inputs/stage1_boozersurface_opt.json"           # from 01_stage1
+  stage1_wout_filename: "wout_stage1.nc"                                # from 01_stage1 (resolved against output dir)
   stage2_bsurf_filename: "stage2_boozersurface_opt.json"                # from 02_stage2 (resolved against output dir)
 
 # ── Device geometry ──────────────────────────────────────────────────────────
@@ -141,20 +141,32 @@ stage2_optimizer:
   gtol: 1.0e-12
 
 # ── Stage 2 ALM (augmented Lagrangian method) ──────────────────────────────
-# Follows the Wechsung et al. stage-2 paper pattern: f=None and all objectives
-# (including SquaredFlux) live in the constraint list. ALM ramps per-constraint
-# penalty weights μᵢ in an outer loop and updates Lagrange multipliers λᵢ as
-# constraints become satisfied. Inner loop is L-BFGS-B on a smooth augmented
-# Lagrangian — no penalty cliffs.
+# f=None and all objectives (including SquaredFlux) live in the constraint list.
+# ALM ramps per-constraint penalty weights μᵢ in an outer loop and updates
+# Lagrange multipliers λᵢ as constraints become satisfied. Inner loop is
+# L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs.
+#
+# SquaredFlux is wrapped in QuadraticPenalty(Jsqf, sqf_target, "max") so it
+# contributes c=0, ∇c=0 once Jsqf drops below sqf_target. This prevents
+# SquaredFlux (the only non-self-clipping term) from dominating the descent
+# indefinitely and lets the geometric constraints take over once field match
+# is "good enough". Target is in the "normalized" SquaredFlux definition
+# (dimensionless, J = ∫(B·n−B_T)² ds / ∫|B|² ds) — see fluxobjective.py.
 stage2_alm:
   mu_init: 10.0        # initial penalty parameter (> 1; scalar applies to all)
-  tau: 4               # penalty growth factor for violated constraints
+  tau: 2               # penalty growth factor for violated constraints (2-10+, problem-dependent).
+                       # Lowered from 4 to prevent μ_curv from monopolizing the search
+                       # direction before current has room to climb (see 51236325 failure).
   maxiter: 1000        # inner L-BFGS-B maxiter per outer step
-  maxfun: 10000        # inner L-BFGS-B maxfun per outer step
-  maxiter_lag: 50      # outer ALM iterations
+  maxfun: 100          # inner L-BFGS-B maxfun per outer step (qi_drivers pattern:
+                       # don't over-optimize a stale penalty level — let the outer loop do the work)
+  maxiter_lag: 150     # outer ALM iterations (bumped from 100 to give slower tau more room)
   grad_tol: 1.0e-12    # gradient norm convergence tolerance
-  c_tol: 1.0e-6        # constraint norm (inf) convergence tolerance
-  dof_scale: 1.0       # DOF step limiter (1.0 = no rescaling; reduce if inner line search struggles)
+  c_tol: 1.0e-6        # constraint norm (inf) convergence tolerance (hardware-limit scale)
+  dof_scale: 0.1       # DOF step limiter: physical step = L-BFGS-B step * dof_scale
+                       # (matches qi_drivers; required to prevent inner line-search stall)
+  sqf_target: 1.0e-4   # SquaredFlux "good enough" target (normalized definition):
+                       # once Jsqf < sqf_target, its constraint contribution is clipped to 0
 
 # ── Singlestage objective weights ───────────────────────────────────────────
 singlestage_weights:

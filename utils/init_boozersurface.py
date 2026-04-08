@@ -5,7 +5,7 @@ Initialize coils and plasma surface for the banana coil optimization pipeline.
 
 Builds TF coils (fixed circular) and banana coils (CurveCWSFourier on winding
 surface), loads a VMEC plasma surface, assembles everything into a
-BoozerSurface object, and saves to inputs/boozersurface.init.json.
+BoozerSurface object, and saves to inputs/stage1_boozersurface_opt.json.
 
 This module provides importable functions for use by 01_stage1_driver.py and
 can also be run as a standalone CLI script:

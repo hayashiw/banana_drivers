@@ -421,7 +421,7 @@ proc0_print(f'    QS total:            {qs_total:.6e}')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Save optimized wout
+# Save optimized wout + boozmn
 # ──────────────────────────────────────────────────────────────────────────────
 wout_opt_path = os.path.join(OUT_DIR, STAGE1_WOUT_FILENAME)
 
@@ -432,6 +432,20 @@ if mpi.proc0_world and wout_src and os.path.exists(wout_src):
     proc0_print(f'Optimized wout saved to {wout_opt_path}')
 else:
     proc0_print(f'WARNING: Could not find VMEC output file to copy')
+
+# Write classic boozmn_*.nc via booz_xform. boozer.bx is a direct reference to
+# the native booz_xform.Booz_xform C++ object (SIMSOPT's Boozer.save() only
+# writes the generic Optimizable JSON, not the standard boozmn NetCDF).
+# The FINAL STATE block above calls qs.J() which triggers boozer.bx.run() on
+# the final equilibrium, so bx results are current. Naming convention mirrors
+# VMEC's wout_<ext>.nc → boozmn_<ext>.nc.
+boozmn_path = os.path.join(OUT_DIR, 'boozmn_stage1.nc')
+if mpi.proc0_world:
+    try:
+        boozer.bx.write_boozmn(boozmn_path)
+        proc0_print(f'Boozer transform saved to {boozmn_path}')
+    except Exception as e:
+        proc0_print(f'WARNING: Could not write boozmn file: {e}')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -452,6 +466,11 @@ if mpi.proc0_world:
     bsurf_out_path = os.path.join(_base_dir, INIT_BSURF_FILEPATH)
     build_and_save(cfg, wout_path=wout_opt_path, out_path=bsurf_out_path,
                    save_vtk=True, print_fn=proc0_print)
+    # Also copy the BoozerSurface JSON into OUT_DIR alongside wout/boozmn so
+    # the scratch output directory contains a complete stage 1 artifact set.
+    bsurf_scratch_copy = os.path.join(OUT_DIR, os.path.basename(bsurf_out_path))
+    shutil.copy2(bsurf_out_path, bsurf_scratch_copy)
+    proc0_print(f'BoozerSurface copy saved to {bsurf_scratch_copy}')
 
 proc0_print(f'\nDiagnostics saved to {DIAGNOSTICS_FILE}')
 proc0_print(f'Outputs saved to {OUT_DIR}')

@@ -2,15 +2,15 @@
 # submit.sh — Unified launcher for all banana drivers.
 #
 # Usage:
-#   ./submit.sh 01                       # shorthand for 01_stage2 (auto mode)
-#   ./submit.sh 01_stage2                # auto: try debug (30min), fallback regular
-#   ./submit.sh 02_singlestage regular   # submit directly to regular queue
-#   ./submit.sh 02_singlestage debug     # submit only to debug (30min, no fallback)
+#   ./submit.sh 01                       # shorthand for 01_stage1 (auto mode)
+#   ./submit.sh 02_stage2                # auto: try debug (30min), fallback regular
+#   ./submit.sh 03_singlestage regular   # submit directly to regular queue
+#   ./submit.sh 03_singlestage debug     # submit only to debug (30min, no fallback)
 #
 #   # Custom walltime (auto-selects QOS based on duration):
-#   ./submit.sh 02 2h                    # singlestage, 2h walltime (regular)
-#   ./submit.sh 01 30m                   # stage2, 30min (debug)
-#   ./submit.sh 01 1h30m                 # stage2, 1h30m (regular)
+#   ./submit.sh 03 2h                    # singlestage, 2h walltime (regular)
+#   ./submit.sh 02 30m                   # stage 2, 30min (debug)
+#   ./submit.sh 02 1h30m                 # stage 2, 1h30m (regular)
 #
 # Per-driver SLURM settings (walltime, cpus) are defined in the case block below.
 # QOS is controlled here — run_driver.sh / run_poincare.sh do NOT set --qos.

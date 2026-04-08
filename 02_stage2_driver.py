@@ -5,9 +5,8 @@ Stage 2 coil-only optimization for the banana coil stellarator-tokamak hybrid.
 
 Two modes are supported, selected via `stage2_mode` in config.yaml:
 
-  'alm'      — (default) augmented Lagrangian method following the Wechsung
-               et al. stage-2 paper pattern: f=None with SquaredFlux and all
-               geometric penalties placed in the constraint list. ALM ramps
+  'alm'      — (default) augmented Lagrangian method: f=None with SquaredFlux
+               and all geometric penalties placed in the constraint list. ALM ramps
                per-constraint penalty weights in an outer loop and updates
                Lagrange multipliers as constraints are satisfied. Inner loop
                is L-BFGS-B on a smooth augmented Lagrangian, so there are no
@@ -92,6 +91,7 @@ ALM_MAXITER_LAG  = int(os.environ.get('BANANA_MAXITER_LAG', cfg['stage2_alm']['m
 ALM_GRAD_TOL     = float(cfg['stage2_alm']['grad_tol'])
 ALM_C_TOL        = float(cfg['stage2_alm']['c_tol'])
 ALM_DOF_SCALE    = float(cfg['stage2_alm'].get('dof_scale', 1.0))
+ALM_SQF_TARGET   = float(cfg['stage2_alm']['sqf_target'])
 
 # Legacy weighted-mode params
 SQF_WEIGHT  = float(cfg['stage2_weights']['squared_flux'])
@@ -154,6 +154,7 @@ if STAGE2_MODE == 'alm':
         grad_tol    = {ALM_GRAD_TOL:.3e}
         c_tol       = {ALM_C_TOL:.3e}
         dof_scale   = {ALM_DOF_SCALE}
+        sqf_target  = {ALM_SQF_TARGET:.3e}  (normalized SquaredFlux)
 """
 else:
     _body = f"""    Objective weights:
@@ -200,24 +201,28 @@ Bdotn_surf = np.sum(Bbs * surface.unitnormal(), axis=-1)
 # ──────────────────────────────────────────────────────────────────────────────
 # Define objective function
 # ──────────────────────────────────────────────────────────────────────────────
-Jsqf  = SquaredFlux(surface, biotsavart)
+Jsqf  = SquaredFlux(surface, biotsavart, definition="normalized")
 _Jl   = CurveLength(banana_curve)
 Jl    = QuadraticPenalty(_Jl, LENGTH_THRESHOLD, "max")
 Jcc   = CurveCurveDistance(curves, CC_THRESHOLD)
 Jcurv = LpCurveCurvature(banana_curve, BANANA_CURV_P, CURV_THRESHOLD)
 
 # Weighted mode builds a single scalar objective for L-BFGS-B. ALM mode uses
-# f=None and places every penalty (including SquaredFlux) in the constraint
-# list, following the Wechsung et al. stage-2 paper pattern.
+# f=None and places every penalty in the constraint list. SquaredFlux is
+# wrapped in QuadraticPenalty so it clips to 0 once the target is hit —
+# without this wrapper, Jsqf is always "active" and dominates the descent
+# indefinitely, preventing Lagrange multipliers on geometric constraints from
+# ever converging (see PLAN.md for the 51228710 failure mode).
 if STAGE2_MODE == 'weighted':
     JF = (SQF_WEIGHT * Jsqf) + (LEN_WEIGHT * Jl) + (CC_WEIGHT * Jcc) + (CURV_WEIGHT * Jcurv)
     constraints = None
 else:
+    Jsqf_alm = QuadraticPenalty(Jsqf, ALM_SQF_TARGET, "max")
     # ALM: build a top-level SumOptimizable so we have a well-defined DOF
     # layout to attach bounds and read ``x`` from. Only used for DOF access;
     # its J()/dJ() are not the objective (f=None).
-    JF = (1 * Jsqf) + (1 * Jl) + (1 * Jcc) + (1 * Jcurv)
-    constraints = [Jsqf, Jl, Jcc, Jcurv]
+    JF = (1 * Jsqf_alm) + (1 * Jl) + (1 * Jcc) + (1 * Jcurv)
+    constraints = [Jsqf_alm, Jl, Jcc, Jcurv]
 
 
 def _objective_lines():
@@ -355,10 +360,16 @@ def callback_weighted(x):
 
 
 def callback_alm(x, k):
-    """ALM outer-iteration callback. k is the outer iteration number."""
+    """ALM outer-iteration callback. k is the outer iteration number.
+
+    Note: augmented_lagrangian.py starts k=1 and uses ``while k < MAXITER_LAG``,
+    so callback(x, k) receives k values in [1, MAXITER_LAG-1]. Display k+1 so
+    the user-facing count reads "1/maxiter_lag" ... "maxiter_lag/maxiter_lag"
+    against the value they set in config.
+    """
     track['iter'] = k
     track['eval'] = 0
-    _print_state(f"ALM ITERATION {k:03d}/{ALM_MAXITER_LAG}")
+    _print_state(f"ALM ITERATION {k + 1:03d}/{ALM_MAXITER_LAG:03d}")
     # Diagnostics row per ALM outer iter (inner rows may be suppressed since
     # ALM's inner minimizer does not call our ``fun``).
     _write_diagnostics_row(Jsqf.J() + Jl.J() + Jcc.J() + Jcurv.J(),
@@ -478,7 +489,7 @@ Total runtime: {timedelta(seconds=opt_runtime)}
 
 {'SUCCESS' if success else 'FAILURE'} ─────────────────────────────────────────
     Banana coil current : {banana_current.get_value()/1e3:.5f} kA
-    ALM outer iter      : {track['iter']} / {ALM_MAXITER_LAG}  (maxiter_lag {'REACHED' if hit_maxiter else 'not reached'})
+    ALM outer iter      : {track['iter'] + 1} / {ALM_MAXITER_LAG}  (maxiter_lag {'REACHED' if hit_maxiter else 'not reached'})
     constraint inf-norm : {c_norm:.3e}  (c_tol={ALM_C_TOL:.3e}, {'SATISFIED' if hit_c_tol else 'NOT satisfied'})
     final L_A value     : {fnc:.6e}
     Per-constraint state (c=value, λ=lag_mul, μ=penalty, w_eff=μc-λ):
@@ -491,7 +502,7 @@ Total runtime: {timedelta(seconds=opt_runtime)}
         'mode': 'alm',
         'date': str(end_date),
         'runtime_sec': opt_runtime,
-        'outer_iter': int(track['iter']),
+        'outer_iter': int(track['iter']) + 1,
         'maxiter_lag': ALM_MAXITER_LAG,
         'final_L_A': float(fnc),
         'constraint_names': constraint_names,

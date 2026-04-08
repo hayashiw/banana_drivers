@@ -8,9 +8,9 @@ Banana coil optimization drivers for a stellarator-tokamak hybrid device using S
 
 The optimization runs in stages, each warm-starting from the previous via BoozerSurface JSON:
 
-1. **00_init** — Build TF + banana coils, VMEC surface → BoozerSurface → `inputs/boozersurface.init.json`
-2. **01_stage2** — Load init BoozerSurface → coil-only optimization (SquaredFlux + penalties) → `outputs/stage2_boozersurface_opt.json`
-3. **02_singlestage** — Load stage 2 BoozerSurface → joint coil + surface optimization (BoozerLS + penalties) → `outputs/singlestage_boozersurface_opt.json`
+1. **01_stage1** — VMEC fixed-boundary optimization (QA target) with resolution ramp → `wout_stage1.nc`, `boozmn_stage1.nc`, `inputs/stage1_boozersurface_opt.json`
+2. **02_stage2** — Load stage 1 BoozerSurface → coil-only optimization (SquaredFlux + penalties) → `outputs/stage2_boozersurface_opt.json`
+3. **03_singlestage** — Load stage 2 BoozerSurface → joint coil + surface optimization (BoozerLS + penalties) → `outputs/singlestage_boozersurface_opt.json`
 4. **poincare_tracing** — Field-line tracing with raw surface cross-section overlay
 5. **Pareto scan** — Sweep over banana current, volume, iota targets (not yet implemented)
 6. **Finite-current** — Proxy coil + VF coils for finite plasma current (not yet implemented)
@@ -25,23 +25,29 @@ banana_drivers/
   CLAUDE.md                          # This file — Claude instructions
   PLAN.md                            # Current status and planned work
   README.md                          # Technical reference
-  submit.sh                          # Unified SLURM launcher (./submit.sh 01, ./submit.sh poincare ...)
+  submit.sh                          # Unified SLURM launcher (./submit.sh 01|02|03, ./submit.sh poincare ...)
   run_driver.sh                      # Generic SLURM batch script (called by submit.sh)
   run_poincare.sh                    # SLURM batch script for Poincare tracing (MPI)
-  00_init_driver.py                  # Init: build coils + surface → BoozerSurface JSON
-  01_stage2_driver.py                # Stage 2: coil-only optimization
-  02_singlestage_driver.py           # Single-stage: joint coil + surface optimization
+  archive.sh                         # Move old scratch outputs into a timestamped archive subdir
+  01_stage1_driver.py                # Stage 1: VMEC fixed-boundary QA optimization (MPI)
+  02_stage2_driver.py                # Stage 2: coil-only optimization (ALM or weighted)
+  03_singlestage_driver.py           # Stage 3: joint coil + surface optimization (BoozerLS)
   poincare_tracing.py                # Poincare field-line tracing + raw surface overlay
-  boozxform_driver.py                # Booz_xform surface extraction (candidate pipeline step)
-  vmec_resize_driver.py              # VMEC resize utility (candidate pipeline step or superseded)
-  inputs/                            # Input files (wout, coil data)
-  outputs/                           # Shared output directory (all stages, gitignored)
+  patch_surface_quadpoints.py        # One-shot patcher for legacy half-period BoozerSurface JSON files
+  boozxform_driver.py                # Legacy booz_xform surface extraction (superseded by stage 1)
+  vmec_resize_driver.py              # Legacy VMEC resize utility (superseded by stage 1)
+  inputs/                            # wout seed, stage1_boozersurface_opt.json, vf_biotsavart.json
+  outputs/                           # Local fallback only — primary outputs go to $SCRATCH/banana_drivers_outputs/
   utils/
+    init_boozersurface.py            # Build TF + banana coils + plasma surface → BoozerSurface (used by stage 1 + CLI)
+    output_dir.py                    # Resolve output directory ($SCRATCH → ./outputs fallback)
     post_process.py                  # Metrics extraction and CSV comparison
     generate_vf_coils.py             # VF coil generation for finite-current
   local/                             # Legacy files, on-hold drivers, master prompt
     prompt.md                        # Master prompt and requirements
 ```
+
+Active output directory is **`$SCRATCH/banana_drivers_outputs/`** (resolved by `utils/output_dir.py`). The in-tree `outputs/` directory is only used as a fallback when `$SCRATCH` is unavailable.
 
 ## Key Design Decisions
 
@@ -49,62 +55,49 @@ banana_drivers/
 All drivers read thresholds, weights, optimizer settings, device geometry, and warm-start paths from `config.yaml`. Never hardcode these values in driver scripts.
 
 ### Hardware Constraints (not relaxable)
-Unlike qi_drivers, constraint thresholds in this project are **fixed hardware limits** from the device design (coil-coil clearance, max curvature from bending radius, max coil length from available conductor). They are NOT expressed with relaxation factors — the values in config.yaml are non-negotiable.
-- TF coil current: 80 kA (fixed, 100 kA used for source comparison runs)
-- Maximum banana coil current: 16 kA (L-BFGS-B upper bound)
-- TF coils: 20 coils, R0=0.976 m, R1=0.4 m, order=1
-- Banana coils: nfp=5, stellsym, wound on winding surface R0=0.976 m, a=0.215 m
-- Banana coil order: 2 (order=4 produces bad coils — distinct from curvature p-norm)
-- Target plasma: R0=0.925 m, edge iota ~ 0.12, nfp=5, stellsym
+Unlike qi_drivers, constraint thresholds in this project are **fixed hardware limits** from the device design (coil-coil clearance, max curvature from bending radius, max coil length from available conductor). They are NOT expressed with relaxation factors — the values in config.yaml are non-negotiable. Always cross-check against `config.yaml` (which is the source of truth); the list below is informational.
+- TF coil current: 100 kA, 20 coils, R0=0.976 m, R1=0.4 m, order=1 (all fixed, not optimized)
+- Maximum banana coil current: 16 kA
+- Banana coils: nfp=5, stellsym, wound on winding surface R0=0.976 m, a=0.215 m, order=2 (order=4 produces bad coils — distinct from curvature p-norm)
+- Target plasma: R0=0.925 m, iota target 0.15, nfp=5, stellsym
+- Stage 2 hardware thresholds: `length_max=1.75 m`, `coil_coil_min=0.05 m`, `curvature_max=40 m⁻¹`
+- Singlestage hardware thresholds: `coil_surface_min=0.02 m`, `curvature_max=20 m⁻¹` (tighter)
 
-### Env var overrides for Pareto scan
-Singlestage supports env var overrides for parameter sweeps:
-- `BANANA_OUTPUT_PREFIX` — file prefix (default: `singlestage`)
-- `BANANA_OUT_DIR` — output directory (default: `./outputs`)
+### Env var overrides
+Drivers read select parameters from environment variables to support Pareto scans and ad-hoc tuning without editing config.yaml:
+- `BANANA_OUT_DIR` — output directory (default: `$SCRATCH/banana_drivers_outputs/` with `./outputs` fallback)
+- `BANANA_OUTPUT_PREFIX` — file prefix for per-run outputs (default: `stage1` / `singlestage`)
+- `BANANA_IOTA` — stage 1 iota target override (Pareto axis)
+- `BANANA_VOLUME` — stage 1 volume target override (Pareto axis)
+- `BANANA_STAGE2_MODE` — `alm` (default) or `weighted` — select stage 2 solver
+- `BANANA_TAU` — stage 2 ALM penalty growth factor override
+- `BANANA_MAXITER_LAG` — stage 2 ALM outer-loop iteration cap override
 
 ### Surface Quadpoints Range
 All drivers must use `range="field period"` when creating surfaces for the BoozerSurface. This gives quadpoints_phi in `[0, 1/nfp)` (one full field period). Do NOT use `range="half period"` (gives only half a period — caused a bug where stage 2 JSON contained incorrect surface domains) or `range="full torus"` (unnecessary — SquaredFlux averages over whatever points are given, and stellsym makes one period sufficient).
 
 ### Boozer Method
-- Use BoozerLS for the baseline (`constraint_weight` > 0 → `boozer_type='ls'`)
-- Driver was already BoozerLS (constraint_weight=1.0); increased to 100.0 to match SIMSOPT examples
-- BoozerExact deferred — revisit for stochastic optimization or tighter residuals
+- Use BoozerLS for singlestage baseline (`constraint_weight > 0 → boozer_type='ls'`, set in `boozer.constraint_weight` in config.yaml — currently 1.0).
+- BoozerExact deferred — revisit for stochastic optimization or tighter residuals.
+- Stage 1 and stage 2 do **not** solve a BoozerSurface. Stage 1 builds a surface via `SurfaceXYZTensorFourier.least_squares_fit(gamma)` from the optimized VMEC equilibrium; stage 2 loads that surface as-is and uses it only as a fixed evaluation grid for `SquaredFlux`. Only singlestage (`03_singlestage_driver.py`) calls `boozersurface.run_code(...)` and modifies the surface DOFs.
 
 ### Objective Function
 - `SurfaceSurfaceDistance` excluded from objective (complicates DOF shifting, minimal benefit) — measure in post-processing only
 - `BANANA_CURV_P = 4` (L4 norm) is intentional — produces better banana coils than L2
-- Banana coil current fixed per run, swept in Pareto scan (not optimized in objective)
+- Banana coil current is a DOF in stage 2 and singlestage (`ScaledCurrent(Current(1), current_init)`). Stage 2 may cap the current at 16 kA via an L-BFGS-B upper bound (`current_cap_stage2` flag, `weighted` mode only — ALM mode is unbounded). Singlestage enforces the cap via `QuadraticPenalty` or hard L-BFGS-B bound depending on initial feasibility.
 
-### Deliberate Deviations from Source Examples
-The drivers intentionally differ from the original example scripts (`example_scripts/banana_coil_solver.py`, `example_scripts/single_stage_banana_example.py`):
+### Stage 2 solver: ALM by default
+Stage 2 uses the augmented Lagrangian method (`stage2_mode: alm` in config.yaml). Rationale:
+- `f=None` with all four terms (SquaredFlux, length, coil-coil, curvature) placed in the constraint list — no fixed weights, no penalty cliffs.
+- `SquaredFlux` is wrapped in `QuadraticPenalty(Jsqf, sqf_target, "max")` so its contribution clips to zero once `Jsqf < sqf_target`. Without this wrapper SquaredFlux is the only non-self-clipping term and dominates the descent indefinitely (see PLAN.md for the 51228710 failure mode that motivated the wrapper).
+- `dof_scale` (default 0.1) limits the physical step per inner L-BFGS-B iteration; matches the qi_drivers pattern and prevents inner line-search stall.
+- Per-constraint `μᵢ` ramps by `tau` per outer iteration. Lower `tau` is safer for stiff constraint problems (curvature in particular) — see the μ-explosion discussion in PLAN.md.
+- Legacy `weighted` mode (single scalar objective with fixed weights) is still available via `BANANA_STAGE2_MODE=weighted` for comparison runs.
 
-| Parameter | Source | New | Rationale |
-|-----------|--------|-----|-----------|
-| `ntor` | 6 | 6 | Was 8 in early driver, corrected to match source |
-| `BANANA_CURV_P` | 2 | 4 | L4 produces better banana coils than L2 (tested) |
-| `SurfaceSurfaceDistance` | weight=1e3, thresh=0.04 | excluded | Complicates DOF shifting; measure in post-processing |
-| `CONSTRAINT_WEIGHT` | 1.0 | 100.0 | Source value too low; 100.0 matches SIMSOPT examples |
-| `ftol` | 1e-5 (at mpol=8) | 1e-5 | Was 1e-15, relaxed to match source |
-| `gtol` | 1e-2 (at mpol=8) | 1e-2 | Was 1e-6, relaxed to match source |
-| `MAXITER` | 300 | 500 | Extra headroom; harmless if gtol/ftol converge first |
-
-Source uses per-mpol tolerance dicts (`ftol_by_mpol`/`gtol_by_mpol`) for Fourier continuation. We use fixed tolerances until the continuation ramp is implemented.
-
-### Convergence
-- Target resolution: mpol = ntor = 12 (start at 6-8, ramp via Fourier continuation)
-- Require both ftol AND gtol convergence
-- Boozer residual < 1e-4 (minimum acceptable)
-- Get initial solve working at single resolution before adding Fourier ramp
-
-### ALM (Augmented Lagrangian Method)
-- Design drivers to accommodate ALM outer-loop structure, but do not activate
-- Wait for validation in qi_drivers, then port
-- Use fixed constraint_weight for now
-
-### Three-Stage Workflow
-- Stage 1 treated as perturbed optimization of existing wout (no original init data available)
-- Stage 1 produces VMEC equilibrium at correct boundary directly — vmec_resize unnecessary
-- Full pipeline: Stage 1 → booz_xform → Stage 2 → Single-stage
+### Singlestage solver: BoozerLS L-BFGS-B
+- Uses BoozerLS (`constraint_weight > 0 → boozer_type='ls'`) with `constraint_weight=1.0` from `config.yaml`.
+- Fixed-weight scalar objective (nonQS + Boozer residual + iota + length + coil-coil + coil-surface + curvature + current). ALM is **not** yet ported to singlestage — see PLAN.md `deferred` section.
+- Boozer residual target < 1e-4 minimum acceptable.
 
 ## Key Conventions
 
@@ -147,7 +140,8 @@ Every driver follows this pattern (must match qi_drivers formatting):
 - `submit.sh` handles debug/regular/auto mode selection and per-driver SLURM settings
 - `run_driver.sh` is the generic batch script — driver name passed via `DRIVER` env var
 - Drivers print `OUT_DIR=...` via atexit for log capture by `run_driver.sh`
-- Single-surface Boozer optimization is inherently serial — do not waste CPUs
+- Stage 1 (VMEC fixed-boundary optimization) is MPI-parallel — uses `least_squares_mpi_solve` with finite-difference gradients, so ndofs+1 ranks is the useful upper bound. `submit.sh` sets `NTASKS=16` by default for stage 1.
+- Stages 2 and 3 (single-surface BoozerLS / coil-only optimization) are inherently serial — do not waste CPUs (`NTASKS=1`)
 - Poincare tracing parallelizes over fieldlines (one MPI rank per field line)
 - Poincare: `./submit.sh poincare <input.json> [debug|regular|auto] [extra args...]`
 - `run_poincare.sh` is the MPI batch script — receives `POINCARE_INPUT`, `POINCARE_LABEL`, `POINCARE_ARGS` via env
@@ -162,7 +156,6 @@ Every driver follows this pattern (must match qi_drivers formatting):
 ## Environment
 
 - **HPC**: Perlmutter @ NERSC (128 CPUs per node, SLURM scheduler)
-- **Conda env**: `sims_banana_env` (NOT `sims_prox_env` — that is for qi_rso)
-- **SIMSOPT fork**: `hayashiw/simsopt` on `whjh/auglag_banana` branch, located at `hybrid_torus/banana/simsopt/`
-- **SIMSOPT for banana**: Always reference `hybrid_torus/banana/simsopt/` for banana-specific SIMSOPT issues (e.g., `CurveCWSFourierCPP`). Do NOT check `qi_rso/simsopt/` unless explicitly asked — it is a separate fork for the QI project.
-- **Related repo**: `qi_rso/qi_drivers/` (separate project; reference for formatting/workflow patterns only. ALM implementation lives there and would need porting.)
+- **SIMSOPT fork**: `hayashiw/simsopt` on `whjh/auglag_banana` branch, located at `hybrid_torus/banana/simsopt/` (relative to project root)
+- **SIMSOPT for banana**: Always reference `hybrid_torus/banana/simsopt/` for banana-specific SIMSOPT issues (e.g., `CurveCWSFourierCPP`, the `auglag_banana` modifications to `augmented_lagrangian.py`). Do NOT check `qi_rso/simsopt/` unless explicitly asked — it is a separate fork for the QI project.
+- **Related repo**: `qi_rso/qi_drivers/` (separate project; reference for formatting/workflow patterns and the original ALM implementation that was ported here.)
