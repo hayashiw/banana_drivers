@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uti
 from output_dir import resolve_output_dir
 from init_boozersurface import build_and_save
 
+from simsopt._core.util import ObjectiveFailure
 from simsopt.mhd import Vmec, Boozer, Quasisymmetry
 from simsopt.objectives import LeastSquaresProblem
 from simsopt.solve import least_squares_mpi_solve
@@ -163,6 +164,8 @@ if COLD_START:
     vmec.indata.mpol = VMEC_MPOL[0]
     vmec.indata.ntor = VMEC_NTOR[0]
     vmec.indata.phiedge = COLD_PHIEDGE
+    # Bump NITER — see warm-start branch below for rationale.
+    vmec.indata.niter_array[:] = 10000
 
     surf = vmec.boundary
     surf.fix_all()
@@ -188,6 +191,12 @@ else:
     vmec.indata.mpol = max(wout_mpol, VMEC_MPOL[0])
     vmec.indata.ntor = max(wout_ntor, VMEC_NTOR[0])
     vmec.indata.phiedge = wout_phiedge
+    # Bump NITER for high-mpol resolution steps. The default input.default
+    # ships with niter_array[:]=3000 per multigrid level, which was enough
+    # for the native-scale seed equilibrium (R0≈1.07 m) but insufficient at
+    # the rescaled scale (R0=0.925 m, phiedge≈0.062) when vmec.mpol=5 — see
+    # job 51257661 where FSQR plateaued at 1.56e-10, just above FTOLV=1e-10.
+    vmec.indata.niter_array[:] = 10000
 
     # CRITICAL: Vmec's Optimizable DOF cache was populated from input.default
     # (phiedge=1.0) during __init__. Overriding vmec.indata.phiedge alone does
@@ -367,15 +376,32 @@ STEP {step+1}/{n_steps} ──────────────────�
     # Preserve wout from this step
     vmec.files_to_delete = []
 
-    # Post-step diagnostics
+    # Post-step diagnostics. Wrapped in try/except because all of these
+    # re-trigger vmec.run() on the current DOF state, and scipy can leave
+    # the final accepted point at a non-converging VMEC state (scipy uses
+    # the fail=1e12 residual fallback to step away from bad evals, so the
+    # *last* eval may be the bad one). We still want the loop to proceed
+    # to the next resolution step and the final save block.
     step_runtime = time.time() - step_t0
-    qs_total = float(sum(np.sum(qs.J()**2) for qs in qs_list))
-    obj = prob.objective()
-
-    aspect = float(vmec.aspect())
-    iota_ax = float(vmec.iota_axis())
-    iota_ed = float(vmec.iota_edge())
-    vol = float(vmec.volume())
+    try:
+        qs_total = float(sum(np.sum(qs.J()**2) for qs in qs_list))
+        obj = prob.objective()
+        aspect = float(vmec.aspect())
+        iota_ax = float(vmec.iota_axis())
+        iota_ed = float(vmec.iota_edge())
+        vol = float(vmec.volume())
+        _diag_ok = True
+    except ObjectiveFailure as e:
+        proc0_print(f'    WARNING: post-step diagnostics failed: {e}')
+        proc0_print( '    (scipy left final accepted point at a non-converging VMEC state; '
+                     'continuing to next step)')
+        qs_total = float('nan')
+        obj = float('nan')
+        aspect = float('nan')
+        iota_ax = float('nan')
+        iota_ed = float('nan')
+        vol = float('nan')
+        _diag_ok = False
 
     proc0_print(
         f"""
@@ -407,18 +433,35 @@ STEP {step+1}/{n_steps} ──────────────────�
 # ──────────────────────────────────────────────────────────────────────────────
 total_runtime = time.time() - t0
 
-qs_total = float(sum(np.sum(qs.J()**2) for qs in qs_list))
-obj = prob.objective()
-final_aspect = float(vmec.aspect())
-final_iota_ax = float(vmec.iota_axis())
-final_iota_ed = float(vmec.iota_edge())
-final_vol = float(vmec.volume())
-aspect_err = abs(final_aspect - ASPECT_TARGET)
-iota_axis_err = abs(final_iota_ax - IOTA_TARGET)
-iota_edge_err = abs(final_iota_ed - IOTA_TARGET)
+# Re-evaluate final state. Protected against VMEC failure on the final DOFs
+# (same rationale as the per-step diagnostics block above).
+try:
+    qs_total = float(sum(np.sum(qs.J()**2) for qs in qs_list))
+    obj = prob.objective()
+    final_aspect = float(vmec.aspect())
+    final_iota_ax = float(vmec.iota_axis())
+    final_iota_ed = float(vmec.iota_edge())
+    final_vol = float(vmec.volume())
+    _final_ok = True
+except ObjectiveFailure as e:
+    proc0_print(f'WARNING: final-state diagnostics failed: {e}')
+    proc0_print( '(reporting last successful per-step values instead)')
+    # Fall back to whatever the last successful per-step eval captured.
+    # These are still in scope from the for-loop above.
+    qs_total = qs_total
+    obj = obj
+    final_aspect = aspect
+    final_iota_ax = iota_ax
+    final_iota_ed = iota_ed
+    final_vol = vol
+    _final_ok = False
+
+aspect_err = abs(final_aspect - ASPECT_TARGET) if _final_ok else float('nan')
+iota_axis_err = abs(final_iota_ax - IOTA_TARGET) if _final_ok else float('nan')
+iota_edge_err = abs(final_iota_ed - IOTA_TARGET) if _final_ok else float('nan')
 
 # Simple success criteria: iota within 10% of target, QS improved
-success = (iota_axis_err / IOTA_TARGET < 0.10) and (iota_edge_err / IOTA_TARGET < 0.50)
+success = _final_ok and (iota_axis_err / IOTA_TARGET < 0.10) and (iota_edge_err / IOTA_TARGET < 0.50)
 
 proc0_print(
     f"""
@@ -454,7 +497,11 @@ FINAL STATE ──────────────────────�
     Per-surface QS metrics:"""
 )
 for i, (s, qs) in enumerate(zip(QS_SURFACES, qs_list)):
-    proc0_print(f'        s={s:.2f}:  {float(np.sum(qs.J()**2)):.6e}')
+    try:
+        _qs_val = float(np.sum(qs.J()**2))
+    except ObjectiveFailure:
+        _qs_val = float('nan')
+    proc0_print(f'        s={s:.2f}:  {_qs_val:.6e}')
 
 proc0_print(f'    QS total:            {qs_total:.6e}')
 
