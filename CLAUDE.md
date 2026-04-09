@@ -70,6 +70,7 @@ Drivers read select parameters from environment variables to support Pareto scan
 - `BANANA_IOTA` — stage 1 iota target override (Pareto axis)
 - `BANANA_VOLUME` — stage 1 volume target override (Pareto axis)
 - `BANANA_STAGE2_MODE` — `alm` (default) or `weighted` — select stage 2 solver
+- `BANANA_CURRENT_MODE_S2` — `fixed` (default), `penalized`, or `free` — how stage 2 treats the banana current DOF (see "Stage 2 current handling" below)
 - `BANANA_TAU` — stage 2 ALM penalty growth factor override
 - `BANANA_MAXITER_LAG` — stage 2 ALM outer-loop iteration cap override
 
@@ -84,7 +85,15 @@ All drivers must use `range="field period"` when creating surfaces for the Booze
 ### Objective Function
 - `SurfaceSurfaceDistance` excluded from objective (complicates DOF shifting, minimal benefit) — measure in post-processing only
 - `BANANA_CURV_P = 4` (L4 norm) is intentional — produces better banana coils than L2
-- Banana coil current is a DOF in stage 2 and singlestage (`ScaledCurrent(Current(1), current_init)`). Stage 2 may cap the current at 16 kA via an L-BFGS-B upper bound (`current_cap_stage2` flag, `weighted` mode only — ALM mode is unbounded). Singlestage enforces the cap via `QuadraticPenalty` or hard L-BFGS-B bound depending on initial feasibility.
+- Banana coil current is a `ScaledCurrent(Current(1), current_init)`. In singlestage it is always a free DOF; the hardware cap is enforced via `QuadraticPenalty` or a hard L-BFGS-B bound depending on initial feasibility. In stage 2 the treatment is selectable via `current_mode_stage2` — see "Stage 2 current handling" below.
+
+### Stage 2 current handling
+Three modes selectable via `current_mode_stage2` in config.yaml or `BANANA_CURRENT_MODE_S2` env var:
+- **`fixed` (default)** — `banana_current` is pinned at `current_fixed_stage2` (default 16 kA, the hardware upper bound) and `fix_all()` removes it from the free DOF set. Stage 2 becomes a shape-only optimization; singlestage handles joint current + shape refinement. This is the recommended mode: stage 2 is a warm-start generator, not a final design, and we don't need it to decide the operating current.
+- **`penalized`** — current stays free, with `QuadraticPenalty(|I|, current_soft_max_stage2, "max")` added to the ALM constraint list. Known to collapse to $I=0$ from the post-stage-1 warm start because normalized `SquaredFlux` is lower with TF alone than with TF plus an unconverged banana shape; once zeroed, all shape gradients vanish (they scale as $I$). Preserved for experiments but not recommended. See PLAN.md for the 51246996 failure analysis.
+- **`free`** — current free, no current constraint. Same collapse mode as `penalized`. Kept for regression tests.
+
+`CurrentPenaltyWrapper` (in `utils/current_penalty.py`) is the adapter that makes `ScaledCurrent` compatible with `QuadraticPenalty`; shared between stage 2 (penalized mode) and singlestage. The gradient uses `sign(I) * scaled_current.vjp([1.0])` — the `vjp` carries the `ScaledCurrent` scale factor via SIMSOPT's chain rule, so a naive `sign(I)` alone would underweight the gradient by ~10^4.
 
 ### Stage 2 solver: ALM by default
 Stage 2 uses the augmented Lagrangian method (`stage2_mode: alm` in config.yaml). Rationale:

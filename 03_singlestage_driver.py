@@ -35,6 +35,7 @@ from scipy.optimize import minimize
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
 from output_dir import resolve_output_dir
+from current_penalty import CurrentPenaltyWrapper
 
 from simsopt._core import load
 from simsopt.geo import (
@@ -52,27 +53,6 @@ from simsopt.geo import (
     boozer_surface_residual,
 )
 from simsopt.objectives import QuadraticPenalty
-from simsopt._core.optimizable import Optimizable
-from simsopt._core.derivative import Derivative, derivative_dec
-
-
-class CurrentPenaltyWrapper(Optimizable):
-    """Wrap a ScaledCurrent so QuadraticPenalty can use it (exposes .J()/.dJ()).
-
-    Returns |I| so that QuadraticPenalty(..., "max") penalizes |I| > threshold.
-    """
-
-    def __init__(self, scaled_current):
-        Optimizable.__init__(self, x0=np.asarray([]), depends_on=[scaled_current])
-        self.scaled_current = scaled_current
-
-    def J(self):
-        return abs(self.scaled_current.get_value())
-
-    @derivative_dec
-    def dJ(self):
-        sign = np.sign(self.scaled_current.get_value())
-        return sign * self.scaled_current.vjp(np.array([1.0]))
 
 
 def proc0_print(*args, **kwargs):

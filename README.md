@@ -96,9 +96,11 @@ Legacy files, temp-hold drivers, and the master prompt live in `local/`.
 ```
 
 - **Stage 1**: VMEC fixed-boundary optimization targeting quasi-axisymmetry ($M=1$, $N=0$). Resolution ramp over boundary Fourier modes. Warm start from existing wout or cold start for Pareto scans over iota/volume targets (`BANANA_IOTA`, `BANANA_VOLUME` env vars). Produces optimized wout + `stage1_boozersurface_opt.json`.
-- **Stage 2**: Coil-only optimization (SquaredFlux + geometric penalties). Banana coil shape and current DOFs only; TF coils fixed. Two modes selectable via `stage2_mode` in `config.yaml`:
+- **Stage 2**: Coil-only optimization (SquaredFlux + geometric penalties). Banana coil shape only by default; TF coils fixed. Two solvers selectable via `stage2_mode` in `config.yaml`:
   - `alm` (default) — augmented Lagrangian method. `f=None` with SquaredFlux and all geometric penalties (length ≤ 1.75 m, CC ≥ 0.05 m, curvature ≤ 40 m⁻¹) placed in the constraint list. Outer loop ramps per-constraint penalty weights $\mu_i$ and updates Lagrange multipliers $\lambda_i$; inner loop is L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs. Writes `stage2_alm_summary.json` with per-constraint $(c, \lambda, \mu, w_\text{eff})$.
   - `weighted` (legacy) — fixed-weight L-BFGS-B on the scalar objective $J = J_\text{sqf} + w_l J_l + w_{cc} J_{cc} + w_\text{curv} J_\text{curv}$. Kept available for comparison and as a fallback; weights live in `stage2_weights`.
+
+  The banana current is handled separately via `current_mode_stage2` (or `BANANA_CURRENT_MODE_S2`): `fixed` (default, pinned at 16 kA and dropped from free DOFs so stage 2 is shape-only), `penalized` (free DOF with soft upper cap), or `free` (free DOF, no constraint). See `CLAUDE.md` for the failure mode that motivated `fixed` as the default.
 - **Stage 3 (singlestage)**: Joint coil + surface optimization using BoozerLS. Minimizes NonQuasiSymmetricRatio + BoozerResidual + geometric penalties. Currently L-BFGS-B on a weighted objective; ALM port planned (see `TODO(ALM)` in `03_singlestage_driver.py` and `PLAN.md`).
 
 ---

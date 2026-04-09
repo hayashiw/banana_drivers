@@ -40,9 +40,29 @@ tf_coils:
 
 # ── Banana coils ─────────────────────────────────────────────────────────────
 banana_coils:
-  current_init: 10.0e+3    # A — initial current for optimization
-  current_max: 16.0e+3     # A — hardware upper bound
-  current_cap_stage2: false # If true, apply L-BFGS-B bound in stage 2; if false, unbounded
+  current_init: 10.0e+3         # A — initial current for optimization
+  current_max: 16.0e+3          # A — hardware upper bound (enforced in singlestage)
+
+  # Stage 2 current handling mode (override via BANANA_CURRENT_MODE_S2).
+  #   'fixed'     — (default) pin the banana current at current_fixed_stage2
+  #                 and drop it from the free DOF set. Shape-only optimization
+  #                 in stage 2; singlestage handles joint current + shape.
+  #   'penalized' — keep current free, add QuadraticPenalty(|I|, soft_max, "max")
+  #                 to the ALM constraint list so current can drift up to
+  #                 current_soft_max_stage2 without a hard cliff.
+  #   'free'      — keep current free, no current constraint. WARNING: can
+  #                 collapse to 0 kA if the initial coil shapes give lower
+  #                 normalized SquaredFlux with only TF field (see run 51246996).
+  current_mode_stage2: fixed
+  current_fixed_stage2: 16.0e+3     # A — pinned physical current when mode='fixed'
+  current_soft_max_stage2: 20.0e+3  # A — soft cap when mode='penalized'.
+                                #     Stage 2 is a warm-start generator, not a
+                                #     final design — we let current drift up to
+                                #     ~20 kA if it helps SquaredFlux converge,
+                                #     then singlestage drives it back down to
+                                #     the hardware limit (16 kA).
+  current_cap_stage2: false     # Legacy: L-BFGS-B hard bound in 'weighted' mode
+                                # only. ALM mode uses current_mode_stage2 above.
   nfp: 5
   order: 2                 # Fourier order (order=4 produces bad shapes)
   nqpts: 128               # Quadrature points on curve
@@ -160,13 +180,24 @@ stage2_alm:
   maxiter: 1000        # inner L-BFGS-B maxiter per outer step
   maxfun: 100          # inner L-BFGS-B maxfun per outer step (qi_drivers pattern:
                        # don't over-optimize a stale penalty level — let the outer loop do the work)
-  maxiter_lag: 150     # outer ALM iterations (bumped from 100 to give slower tau more room)
+  maxiter_lag: 80      # outer ALM iterations.
+                       # Stage 2 is a warm-start generator — we don't need
+                       # tight convergence, just a reasonable basin for
+                       # singlestage to take over. Run 51238490 showed that
+                       # iters 70+ produced only oscillation.
   grad_tol: 1.0e-12    # gradient norm convergence tolerance
-  c_tol: 1.0e-6        # constraint norm (inf) convergence tolerance (hardware-limit scale)
+  c_tol: 1.0e-3        # constraint norm (inf) convergence tolerance.
+                       # Loosened from 1e-6 — singlestage re-solves all
+                       # geometric constraints with tighter thresholds, so
+                       # hitting 1e-3 here (≈ mm-scale residuals relative to
+                       # hardware limits) is sufficient to warm-start stage 3.
   dof_scale: 0.1       # DOF step limiter: physical step = L-BFGS-B step * dof_scale
                        # (matches qi_drivers; required to prevent inner line-search stall)
-  sqf_target: 1.0e-4   # SquaredFlux "good enough" target (normalized definition):
-                       # once Jsqf < sqf_target, its constraint contribution is clipped to 0
+  sqf_target: 1.0e-3   # SquaredFlux "good enough" target (normalized definition):
+                       # once Jsqf < sqf_target, its constraint contribution is clipped to 0.
+                       # Loosened from 1e-4 — singlestage runs a full joint
+                       # coil+surface solve, so coarse field matching is fine
+                       # as long as the coil topology is right.
 
 # ── Singlestage objective weights ───────────────────────────────────────────
 singlestage_weights:

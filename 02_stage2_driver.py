@@ -34,6 +34,7 @@ from scipy.optimize import minimize
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
 from output_dir import resolve_output_dir
+from current_penalty import CurrentPenaltyWrapper
 
 from simsopt._core import load
 from simsopt.geo import (
@@ -65,9 +66,22 @@ STELLSYM = cfg['device']['stellsym']
 TF_NUM = cfg['tf_coils']['num']
 
 # Banana coils
-BANANA_CURV_P        = cfg['banana_coils']['curv_p']
-BANANA_CURRENT_MAX   = cfg['banana_coils']['current_max']
-BANANA_CURRENT_CAP   = cfg['banana_coils'].get('current_cap_stage2', True)
+BANANA_CURV_P              = cfg['banana_coils']['curv_p']
+BANANA_CURRENT_MAX         = cfg['banana_coils']['current_max']
+BANANA_CURRENT_SOFT_MAX_S2 = cfg['banana_coils']['current_soft_max_stage2']
+BANANA_CURRENT_FIXED_S2    = float(cfg['banana_coils']['current_fixed_stage2'])
+BANANA_CURRENT_CAP         = cfg['banana_coils'].get('current_cap_stage2', True)
+
+# Stage 2 current handling: 'free' | 'penalized' | 'fixed'
+STAGE2_CURRENT_MODE = os.environ.get(
+    'BANANA_CURRENT_MODE_S2',
+    cfg['banana_coils'].get('current_mode_stage2', 'fixed')
+).lower()
+if STAGE2_CURRENT_MODE not in ('free', 'penalized', 'fixed'):
+    raise ValueError(
+        f"current_mode_stage2 must be 'free', 'penalized', or 'fixed', "
+        f"got {STAGE2_CURRENT_MODE!r}"
+    )
 
 # Warm-start
 INIT_BSURF_FILE = os.path.abspath(cfg['warm_start']['init_bsurf_filepath'])
@@ -136,8 +150,12 @@ INPUT PARAMETERS ─────────────────────
         bsurf       = {INIT_BSURF_FILE}
 
     Banana coils:
-        curv p-norm = {BANANA_CURV_P}
-        current_cap = {BANANA_CURRENT_CAP} ({'bound at ' + str(BANANA_CURRENT_MAX/1e3) + ' kA' if BANANA_CURRENT_CAP else 'unbounded — limit applied in singlestage'})
+        curv p-norm      = {BANANA_CURV_P}
+        current_max (HW) = {BANANA_CURRENT_MAX/1e3:.1f} kA  (enforced in singlestage)
+        current_mode_s2  = {STAGE2_CURRENT_MODE}
+        current_fixed_s2 = {BANANA_CURRENT_FIXED_S2/1e3:.1f} kA  (used when mode='fixed')
+        current_soft_max = {BANANA_CURRENT_SOFT_MAX_S2/1e3:.1f} kA  (used when mode='penalized')
+        current_cap_hard = {BANANA_CURRENT_CAP} (L-BFGS-B bound — used only in legacy 'weighted' mode)
 
     Thresholds:
         length_max  = {LENGTH_THRESHOLD} m
@@ -189,6 +207,26 @@ banana_coils = coils[TF_NUM:]
 banana_curve = banana_coils[0].curve
 banana_current = banana_coils[0].current
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Apply current mode: pin + fix the DOF when mode='fixed'.
+#
+# banana_current is ScaledCurrent(Current(1), scale).  get_value() is linear
+# in the single underlying Current DOF, so scaling .x by (target / current)
+# sets the physical value exactly.  fix_all() walks the tree and fixes the
+# child DOF so it is removed from the free-DOF set before JF is built.
+# ─────────────────────────────────────────────────────────────────────────────
+if STAGE2_CURRENT_MODE == 'fixed':
+    inner = banana_current.current_to_scale
+    current_now = banana_current.get_value()
+    inner.x = inner.x * (BANANA_CURRENT_FIXED_S2 / current_now)
+    banana_current.fix_all()
+    proc0_print(
+        f'  Banana current pinned at {banana_current.get_value()/1e3:.1f} kA '
+        f'and fixed (mode=fixed).'
+    )
+else:
+    proc0_print(f'  Banana current free (mode={STAGE2_CURRENT_MODE}).')
+
 # Use the BoozerSurface's own surface for SquaredFlux evaluation.
 # With stellsym coils, one field period is sufficient (no full-torus needed).
 biotsavart.set_points(surface.gamma().reshape((-1, 3)))
@@ -206,6 +244,14 @@ _Jl   = CurveLength(banana_curve)
 Jl    = QuadraticPenalty(_Jl, LENGTH_THRESHOLD, "max")
 Jcc   = CurveCurveDistance(curves, CC_THRESHOLD)
 Jcurv = LpCurveCurvature(banana_curve, BANANA_CURV_P, CURV_THRESHOLD)
+# Current soft-cap (only used when mode='penalized'): QuadraticPenalty(|I|,
+# soft_max, "max") clips to 0 below the soft max so it only activates if
+# ALM lets current drift too high.
+if STAGE2_CURRENT_MODE == 'penalized':
+    _Jcurr = CurrentPenaltyWrapper(banana_current)
+    Jcurr  = QuadraticPenalty(_Jcurr, BANANA_CURRENT_SOFT_MAX_S2, "max")
+else:
+    Jcurr = None
 
 # Weighted mode builds a single scalar objective for L-BFGS-B. ALM mode uses
 # f=None and places every penalty in the constraint list. SquaredFlux is
@@ -216,13 +262,19 @@ Jcurv = LpCurveCurvature(banana_curve, BANANA_CURV_P, CURV_THRESHOLD)
 if STAGE2_MODE == 'weighted':
     JF = (SQF_WEIGHT * Jsqf) + (LEN_WEIGHT * Jl) + (CC_WEIGHT * Jcc) + (CURV_WEIGHT * Jcurv)
     constraints = None
+    constraint_names = None
 else:
     Jsqf_alm = QuadraticPenalty(Jsqf, ALM_SQF_TARGET, "max")
     # ALM: build a top-level SumOptimizable so we have a well-defined DOF
-    # layout to attach bounds and read ``x`` from. Only used for DOF access;
-    # its J()/dJ() are not the objective (f=None).
+    # layout to read ``x`` from. Only used for DOF access; its J()/dJ() are
+    # not the objective (f=None).
     JF = (1 * Jsqf_alm) + (1 * Jl) + (1 * Jcc) + (1 * Jcurv)
-    constraints = [Jsqf_alm, Jl, Jcc, Jcurv]
+    constraints      = [Jsqf_alm, Jl, Jcc, Jcurv]
+    constraint_names = ['squared_flux', 'length', 'coil_coil', 'curvature']
+    if Jcurr is not None:
+        JF = JF + (1 * Jcurr)
+        constraints.append(Jcurr)
+        constraint_names.append('current')
 
 
 def _objective_lines():
@@ -475,7 +527,6 @@ if STAGE2_MODE == 'alm':
     # Effective per-constraint weight (analogue of fixed weights in weighted
     # mode): w_eff_i = μ_i * c_i - λ_i.
     w_eff = mu_k * c_vals - lag_mul
-    constraint_names = ['squared_flux', 'length', 'coil_coil', 'curvature']
     eff_weight_lines = '\n'.join(
         f'        {name:<13s} c={ci:.3e}  λ={li:.3e}  μ={mi:.3e}  w_eff={wi:.3e}'
         for name, ci, li, mi, wi in zip(constraint_names, c_vals, lag_mul, mu_k, w_eff)

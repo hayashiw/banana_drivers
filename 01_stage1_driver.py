@@ -188,6 +188,17 @@ else:
     vmec.indata.ntor = max(wout_ntor, VMEC_NTOR[0])
     vmec.indata.phiedge = wout_phiedge
 
+    # CRITICAL: Vmec's Optimizable DOF cache was populated from input.default
+    # (phiedge=1.0) during __init__. Overriding vmec.indata.phiedge alone does
+    # NOT update that cache — so when the least-squares optimizer later calls
+    # `prob.x = x` (which propagates free DOFs through the tree), Vmec.set_dofs
+    # is invoked with the stale [1.0, 0.0, 1.0] vector and silently resets
+    # indata.phiedge back to 1.0. Re-syncing local_full_x from indata here
+    # locks the cache to the seed wout's phiedge so it survives DOF tree syncs.
+    # Without this fix the stage 1 output has |B| ~12 T (phiedge=1.0) instead
+    # of ~1 T (phiedge=0.083).
+    vmec.local_full_x = np.asarray(vmec.get_dofs())
+
     # Read the LCFS boundary from the wout and assign to vmec
     from simsopt.geo import SurfaceRZFourier
     wout_surf = SurfaceRZFourier.from_wout(WOUT_FILE, range='full torus',
