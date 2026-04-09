@@ -186,11 +186,15 @@ stage2_alm:
                        # singlestage to take over. Run 51238490 showed that
                        # iters 70+ produced only oscillation.
   grad_tol: 1.0e-12    # gradient norm convergence tolerance
-  c_tol: 1.0e-3        # constraint norm (inf) convergence tolerance.
-                       # Loosened from 1e-6 — singlestage re-solves all
-                       # geometric constraints with tighter thresholds, so
-                       # hitting 1e-3 here (≈ mm-scale residuals relative to
-                       # hardware limits) is sufficient to warm-start stage 3.
+  c_tol: 1.0e-8        # constraint norm (inf) convergence tolerance.
+                       # IMPORTANT: constraints are QuadraticPenalty-wrapped
+                       # (SquaredFlux via sqf_target, length/cc/curv are
+                       # self-clipping squared penalties) so c is in SQUARED
+                       # units. c_tol=1e-8 corresponds to a ~1e-4 linear
+                       # residual — meaningful against sqf_target=1e-3.
+                       # A linear-units value like 1e-3 makes the initial
+                       # state trivially "satisfied" and ALM exits with no
+                       # descent at iter 1 (see run 51248041).
   dof_scale: 0.1       # DOF step limiter: physical step = L-BFGS-B step * dof_scale
                        # (matches qi_drivers; required to prevent inner line-search stall)
   sqf_target: 1.0e-3   # SquaredFlux "good enough" target (normalized definition):
