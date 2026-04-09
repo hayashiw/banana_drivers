@@ -23,6 +23,7 @@ All drivers are submitted via `submit.sh`, which handles SLURM queue selection a
 ```bash
 ./submit.sh 01                       # stage 1 VMEC QA (auto: debug → regular fallback, MPI)
 ./submit.sh 02                       # stage 2 coil-only (auto mode)
+./submit.sh 02 --poincare-gate       # stage 2 + post-run --quick Poincare trace (afterok)
 ./submit.sh 03 regular               # single-stage (regular queue only)
 ./submit.sh 03_singlestage debug     # single-stage (debug queue only)
 ```
@@ -64,16 +65,17 @@ Legacy files, temp-hold drivers, and the master prompt live in `local/`.
 ## Key Parameters
 
 ### Hardware Constraints
-- **TF coils**: 20 coils, 80 kA each, `R0=0.976 m`, `R1=0.4 m`, order=1
+- **TF coils**: 20 coils, 100 kA each, `R0=0.976 m`, `R1=0.4 m`, order=1 (all fixed)
 - **Banana coils**: nfp=5, stellsym, wound on winding surface `R0=0.976 m`, `a=0.215 m`, max 16 kA
 - **Banana coil order**: 2 (order=4 produces bad coils)
 - **Banana curvature p-norm**: 4 (L4 produces better coils than L2)
 - **Target plasma**: `R0=0.925 m`, edge iota ~ 0.12, nfp=5, stellsym
 
 ### Solver (current baseline target)
-- **Boozer method**: BoozerLS (BoozerExact deferred due to Newton initialization issues)
+- **Boozer method**: BoozerLS (BoozerExact deferred due to Newton initialization issues); `constraint_weight=1.0e+3`
 - **Target resolution**: mpol = ntor = 12 (start at 6-8, ramp up via Fourier continuation)
-- **Convergence**: ftol AND gtol satisfied, Boozer residual < 1e-4
+- **Singlestage convergence**: ftol AND gtol satisfied, Boozer residual < 1e-4
+- **Stage 2 convergence**: truncated iteration budget — gtol and ftol set to unreachable (1e-15), maxiter=600 is the expected exit path. Real health check is a post-run Poincare trace via `./submit.sh 02 --poincare-gate`, not L-BFGS-B's gradient norm.
 - **Optimizer**: L-BFGS-B
 - **Coil curve class**: `CurveCWSFourierCPP`
 

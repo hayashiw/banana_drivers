@@ -633,12 +633,42 @@ else:
 
     success = res.success
 
+    # Four-state verdict. Stage 2 runs under a "truncated iteration budget"
+    # philosophy: gtol and ftol are both set to 1e-15 (unreachable), so the
+    # happy path is hitting maxiter. The real health check is a post-run
+    # Poincare trace, not L-BFGS-B's gradient norm. Possible exits:
+    #
+    #   CONVERGED       — res.success=True and gtol satisfied. Rare/unexpected
+    #                     under the truncated regime; celebrate if it happens.
+    #   BUDGET_EXHAUSTED — NOT res.success and maxiter reached. This is the
+    #                     normal happy path: the optimizer used all 600 iters.
+    #                     scipy reports success=False because L-BFGS-B treats
+    #                     maxiter as a "failed convergence" exit code, but for
+    #                     our purposes it's a successful budget consumption.
+    #   WARNING         — res.success=True but gtol NOT satisfied. An ftol-type
+    #                     early exit on a plateau before maxiter. Should be
+    #                     impossible with ftol=1e-15, but kept as a safety
+    #                     net in case the scipy defaults change.
+    #   FAILURE         — NOT res.success and NOT maxiter. Line-search failure
+    #                     or other scipy internal error — genuinely broken.
+    if res.success:
+        verdict = 'CONVERGED' if hit_gtol else 'WARNING'
+    else:
+        verdict = 'BUDGET_EXHAUSTED' if hit_maxiter else 'FAILURE'
+
+    verdict_explanations = {
+        'CONVERGED':        'gtol satisfied (rare under truncated regime)',
+        'BUDGET_EXHAUSTED': 'maxiter reached — normal happy path, run Poincare gate to verify',
+        'WARNING':          'early exit before maxiter, gradient not small — plateau or ftol trigger',
+        'FAILURE':          'scipy internal failure (line search, etc.)',
+    }
+
     proc0_print(
         f"""
 [{end_date}] ...optimization complete
 Total runtime: {timedelta(seconds=opt_runtime)}
 
-{'SUCCESS' if success else 'FAILURE'} ─────────────────────────────────────────
+{verdict} ─────────────────────────────────────────
     Banana coil current : {banana_current.get_value()/1e3:.5f} kA
     scipy message       : {res.message}
     scipy success       : {res.success}
@@ -650,6 +680,7 @@ Total runtime: {timedelta(seconds=opt_runtime)}
         rel reduction = (F_prev-F)/max(1,|F_prev|,|F|) = {rel_red_str}
         threshold = FACTR*EPSMCH = ({FACTR:.3e})*({EPSMCH:.3e}) = {FTOL:.3e}
     final objective     : {res.fun:.6e}
+    verdict             : {verdict}  ({verdict_explanations[verdict]})
 """
     )
 

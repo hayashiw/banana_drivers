@@ -39,9 +39,16 @@ Custom walltime (auto-selects QOS based on duration):
     Shorthand format:   30m, 2h, 1h30m, 90m
     <= 30min → debug QOS;  > 30min → regular QOS
 
+Flags:
+    --poincare-gate  After a 02_stage2 run, also submit a --quick Poincare
+                     trace (afterok dependency) to sanity-check coil-field
+                     iota and surface nesting before singlestage. Off by
+                     default — stage 2 is submitted alone unless you opt in.
+
 Examples:
     ./submit.sh 01                    # stage 1 VMEC, auto mode (MPI)
-    ./submit.sh 02                    # stage 2, auto mode
+    ./submit.sh 02                    # stage 2 alone
+    ./submit.sh 02 --poincare-gate    # stage 2 + post-run Poincare gate
     ./submit.sh 03 regular            # single-stage, regular queue
     ./submit.sh 03 2h                 # single-stage, 2h walltime (regular)
     ./submit.sh 02 30m                # stage 2, 30min (debug)
@@ -92,6 +99,19 @@ to_hhmmss() {
 case "${1:---help}" in
     -h|--help) usage 0 ;;
 esac
+
+# Strip optional flags from the argument list before positional parsing.
+# Supported flags:
+#   --poincare-gate   opt in to the post-stage-2 Poincare trace gate
+POINCARE_GATE=false
+_ARGS=()
+for _arg in "$@"; do
+    case "$_arg" in
+        --poincare-gate) POINCARE_GATE=true ;;
+        *) _ARGS+=("$_arg") ;;
+    esac
+done
+set -- "${_ARGS[@]}"
 
 DRIVER="${1:?$(usage 1)}"
 
@@ -269,3 +289,49 @@ case "$MODE" in
         exit 1
         ;;
 esac
+
+# ── Post-stage-2 Poincare gate ──────────────────────────────────────────────
+# Automatically submit a quick Poincare trace after a stage 2 run so the coil
+# field is sanity-checked (iota, surface nesting) before moving on to single-
+# stage. This catches "stage 2 converged but coils don't carry iota" failures
+# immediately — see run 51286115 / singlestage 51286237 for the incident that
+# motivated this. Opt in with --poincare-gate (off by default).
+if [[ "$DRIVER" == "02_stage2" && "$POINCARE_GATE" == true ]]; then
+    STAGE2_OUTPUT="${BANANA_OUT_DIR:-$SCRATCH/banana_drivers_outputs}/stage2_boozersurface_opt.json"
+    GATE_LABEL="stage2_gate"
+    GATE_TIME="00:30:00"
+    GATE_NTASKS=12   # matches --quick nlines in poincare_tracing.py
+    GATE_ARGS="--quick"
+
+    GATE_SBATCH_COMMON=(
+        --export="ALL,POINCARE_INPUT=${STAGE2_OUTPUT},POINCARE_LABEL=${GATE_LABEL},POINCARE_ARGS=${GATE_ARGS}"
+        --job-name="banana_poincare_gate"
+        --output="stage2_gate_poincare_%j.log"
+        --ntasks="$GATE_NTASKS"
+        --cpus-per-task=1
+        --qos=debug
+        --time="$GATE_TIME"
+        --kill-on-invalid-dep=yes
+        run_poincare.sh
+    )
+
+    echo ""
+    echo "Post-stage-2 Poincare gate (--quick, ${GATE_NTASKS} lines):"
+    echo "  Input: $STAGE2_OUTPUT"
+
+    case "$MODE" in
+        debug|regular|custom)
+            GATE_JOB=$(sbatch --dependency=afterok:"$JOB_ID" "${GATE_SBATCH_COMMON[@]}" | awk '{print $4}')
+            echo "  Submitted gate: $GATE_JOB (afterok:$JOB_ID)"
+            ;;
+        auto)
+            # One gate per stage 2 attempt. In auto mode, only the stage 2 job
+            # that actually runs will trigger its gate; the other gate is
+            # killed when its dependency becomes unsatisfiable.
+            GATE_DEBUG=$(sbatch --dependency=afterok:"$DEBUG_JOB" "${GATE_SBATCH_COMMON[@]}" | awk '{print $4}')
+            echo "  Submitted gate for debug job: $GATE_DEBUG (afterok:$DEBUG_JOB)"
+            GATE_REG=$(sbatch --dependency=afterok:"$REGULAR_JOB" "${GATE_SBATCH_COMMON[@]}" | awk '{print $4}')
+            echo "  Submitted gate for regular job: $GATE_REG (afterok:$REGULAR_JOB)"
+            ;;
+    esac
+fi

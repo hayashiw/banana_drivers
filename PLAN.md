@@ -1,6 +1,6 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-09 (Singlestage 51286237 FAILED; revised diagnosis — **helical amplitude hypothesis**. Stage 2 minimizes SquaredFlux on a fixed VMEC LCFS that encodes iota=0.15 by construction, but that's a necessary-not-sufficient condition. BoozerLS in singlestage measures the coil field's TRUE iota (which may be ≈0) on its own flux surface. Poincare 51287878 queued to measure iota empirically. Branching plan drafted below: Branch A = stage-2-side iota-aware objective; Branch B = cold-start pipeline + coil capability probe if hardware can't reach target iota.)
+Last updated: 2026-04-09 (**Helical amplitude hypothesis CONFIRMED empirically.** Poincare 51287878 measured $|\iota|\leq 0.013$ on the stage 2 coil field (12× short of 0.15 target, matching the 1/12.5 helical/axisym NI ratio). Diag 51304473 iota scan on the post-fix stage 2 `BoozerSurface` showed every physically reasonable $\iota_\text{init}\in\{0.001, 0.01, 0.1, 0.15, 0.2, 0.25\}$ collapses to $\iota\approx 0$; edge trials $\{0.05, 0.3\}$ diverge to nonsense, not alternative basins. Surface non-axisym metric $1.09\text{e-}2$ (real but mild stellarator shaping). **Verdict: no $\iota=0.15$ basin exists on this coil/surface combination — the coils physically cannot support the target transform.** Branch A (stage-2-side iota-aware objective) is effectively dead; Branch B (cold-start pipeline with achievable iota from coil capability probe) is forced. Stage 2 convergence philosophy rewritten (truncated budget, maxiter=600, unreachable gtol/ftol, 4-state verdict banner, opt-in `--poincare-gate`). `poincare_tracing.py` R_axis starting-point estimator switched to the quadpoint centroid (triangularity-aware).)
 
 ## Current Status
 
@@ -56,6 +56,19 @@ jhalpern30's reference pipeline has the same latent mismatch (TODO comment in `S
 
 **Stage 2 rerun on corrected equilibrium (job 51286115, 2026-04-09):** SUCCESS. Ran in `weighted` mode (L-BFGS-B, config set to `stage2_mode: weighted`). 327 iterations, 208s runtime, `CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH`, `grad_norm=1.56e-8`. Final state: `sqflx=3.77e-4`, `coil_length=1.716 m` (✓ ≤ 1.75), `ccdist=0.0485 m` (grazing, 3% under 0.05 hardware min), `max_kappa=41.55` (grazing, 4% over 40 stage-2 soft limit). Profile matches the earlier weighted run 51268967 (sqflx 3.91e-4, length 1.726, ccdist 0.0491, max_kappa 41.31) — expected since weights are unchanged and the equilibrium surface is similar shape at ~half the field. The two grazing violations are soft in stage 2; singlestage enforces tighter thresholds (`curvature_max_ss=20`, and `coil_surface_min=0.02` plus curvature weighting) and should pull both back into spec.
 
+**Stage 2 convergence philosophy rewrite (2026-04-09).** Review of run 51286115 showed scipy returned `success=True` on `CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH` even though `grad_inf=1.08e-8` was ~4 orders above the old `gtol=1e-12` — a plateau-induced spurious success that passed our banner check. Comparing to jhalpern30's reference (`STAGE_2/banana_coil_solver.py`: `maxiter=300, tol=1e-15, maxcor=300`) revealed a different philosophy: unreachable convergence tolerances, `maxiter` as the intended exit path, and an external Poincare sanity check rather than gradient-norm-based convergence. Adopted this pattern:
+- `config.yaml:stage2_optimizer`: `maxiter=600`, `maxcor=300` (intentional, do not reduce — see `feedback_stage2_maxcor_intentional.md` memory), `ftol=1e-15`, `gtol=1e-15`, `tol=1e-15` (all unreachable).
+- `02_stage2_driver.py` banner rewritten as a **4-state verdict**:
+  - `CONVERGED` — gtol satisfied (rare under truncated regime)
+  - `BUDGET_EXHAUSTED` — maxiter reached, normal happy path; run Poincare gate to verify
+  - `WARNING` — early exit on plateau / ftol trigger, gradient not small
+  - `FAILURE` — scipy internal failure (line search etc.)
+- `submit.sh --poincare-gate` flag (opt-in, **default off**): after a stage 2 submission, chain a `--quick` Poincare trace (12 lines, debug QoS, 30min) on `stage2_boozersurface_opt.json` via `afterok` dependency. `--kill-on-invalid-dep=yes` handles the auto-mode (debug+regular fallback) case cleanly. The external Poincare trace is now the real convergence check; scipy's exit reason is informational only.
+
+**BoozerLS `constraint_weight` bump 1.0 → 1.0e+3 (2026-04-09).** `boozer.constraint_weight` controls the weight on BoozerLS's surface-label penalty term relative to the Boozer residual in the least-squares problem. The larger the weight, the more firmly BoozerLS anchors the iota iterate to the requested label (via $(\iota - \iota_\text{label})^2$-type terms in the residual) rather than letting it drift to whatever minimizes the Boozer residual alone. The prior value `1.0` allowed drift into the spurious iota=0 basin on any surface with weak helical coupling to the coil field (see `diag_iota_basin.py` results + helical amplitude hypothesis above). `1.0e+3` matches SIMSOPT example conventions for stiffer anchoring. This is an **independent mitigation** from the coil capability problem — it does NOT manufacture a basin that doesn't exist (Poincare 51287878 showed the coils can't support $\iota=0.15$ regardless of BoozerLS settings), but it should reduce the risk of BoozerLS wandering into degenerate iota=0 basins when the coil field DOES support the target, making future cold-start pipeline runs more reliable once a coil-capable $\iota_\text{max}$ is chosen. Applies to singlestage (`03_singlestage_driver.py`) and the standalone `utils/init_boozersurface.py` CLI which both read the same config key.
+
+**Poincare `R_axis` starting-point patch (2026-04-09).** `poincare_tracing.py:make_start_points` previously estimated the magnetic axis $R$ as the arithmetic mean of inboard/outboard midplane points ($z\approx 0$) on the $\phi=0$ cross section, which assumes $R_\text{axis}$ is halfway between inboard and outboard — only true for an up-down-symmetric ellipse with zero triangularity. For positive triangularity the true axis sits inboard of the midplane mean (Shafranov-like shift from shape alone). Switched to a weighted heuristic `r_axis = 0.25 * (3*r_inboard + r_outboard)` — shift the starting-sweep origin 3:1 inboard — so the starting R sweep covers the expected axis region instead of landing on the outboard side of it. Midplane mean is kept in the log for comparison. The quadpoint-centroid alternative (`cs0_r.mean()`) is present in the source as a commented reference for future experiments; the 3:1 heuristic was chosen because it gives a more conservative inward bias that handles circular-core surfaces (where the centroid equals the midplane mean) without regressing. Rationale: on surfaces whose $\iota$ is too small to support nesting much beyond the axis, getting the starting R close to the real axis matters.
+
 **Singlestage 51286237 FAILED (2026-04-09) — phiedge fix was necessary but NOT sufficient.** End-to-end run on the |B|-corrected pipeline (stage 1 51285086 → stage 2 51286115 → singlestage 51286237) still fails BoozerLS basin-finding:
 ```
 BFGS   - False  iter=1500  iota= 0.00153   ‖grad‖=1.28e-5   (wrong basin, hit maxiter)
@@ -72,7 +85,7 @@ So the |B| mismatch is gone, but BoozerLS still lands in the same iota≈0.0015 
 **Revised diagnosis:** The BoozerLS basin problem is a property of the objective landscape on this coil/surface geometry, not field scaling. Candidate explanations to investigate:
 1. **Initial iota value fed to BoozerLS** — `03_singlestage_driver.py` may be calling `run_code(iota=..., G=...)` with an iota that primes the wrong basin. (The stored bsurf has `res: none`, so the iota passed in is whatever the driver sets.) Check line ~240 in the driver.
 2. **Surface too axisymmetric** — if the stage 2 warm-start surface has small non-(0,0) harmonics relative to R₀, the circular-torus iota=0 basin is attractive and BFGS drifts into it. A "shape non-axisymmetry" metric (ratio of non-(0,0) harmonic amplitudes to R₀) would quantify this.
-3. **BoozerLS constraint_weight** — currently 1.0 in `config.yaml:boozer`. The least-squares formulation balances a surface-label penalty against the Boozer residual; a larger `constraint_weight` forces BoozerLS to stay close to the label and may prevent drift into iota=0.
+3. **BoozerLS constraint_weight** — was 1.0 in `config.yaml:boozer`. The least-squares formulation balances a surface-label penalty against the Boozer residual; a larger `constraint_weight` forces BoozerLS to stay close to the label and may prevent drift into iota=0. Bumped to `1.0e+3` (2026-04-09) as an independent mitigation — see the "BoozerLS constraint_weight bump" note below.
 4. **BFGS vs Newton ordering** — BoozerLS's BFGS pre-solve finds iota=0.0015, then Newton takes over from that anchor and diverges. If BFGS landed in the correct basin, Newton would likely succeed. Need to feed BFGS a better starting iota (or use a different initial solver).
 
 **Next actions:**
@@ -89,12 +102,35 @@ So the |B| mismatch is gone, but BoozerLS still lands in the same iota≈0.0015 
    - Ratio `(nonax R)/(axisym m=1) = 0.21` — real stellarator shaping, not a circular torus.
 3. **Revised hypothesis: helical amplitude mismatch.** VMEC's iota=0.15 is the rotational transform of the **VMEC MHD equilibrium** on this boundary under the prescribed phiedge; VMEC sculpts the shape via zero-β reverse solve to satisfy the specified iota profile. BoozerLS's iota is the rotational transform of the **actual Biot-Savart coil field**, found by adjusting surface DOFs so the coil field is tangent to them. These agree only if the coils actually produce a flux surface matching the VMEC LCFS with iota=0.15. Stage 2 drives `SquaredFlux = ∫(B·n)² dA` to 3.77e-4 on the fixed VMEC surface — a necessary but **not sufficient** condition. You can match a surface shape with a field that has very different iota content inside. Napkin: 10 banana × 16 kA = 160 kA helical vs 20 TF × 100 kA = 2 MA axisym → helical/axisym ≈ 1/12.5 → expected iota from the banana coils is O(0.01–0.05), consistent with the ≈0.0015 we're measuring if geometric coupling further dilutes it. At the pinned 16 kA, the coils may simply not carry enough helical NI to reproduce the iota=0.15 that VMEC baked into the boundary.
 
-**Poincare 51287878 QUEUED (2026-04-09) — the critical empirical test.** Field-line trace of the stage 2 coil field at 16 kA banana / 100 kA × 20 TF, using existing `poincare_tracing.py` defaults (32 MPI ranks, `tmax=7000`, `tol=1e-7`, `max_transits=2000`, `nr=30, nphi=20, degree=3`). Measures the true iota of the coil field independent of BoozerLS. Three possible outcomes:
-- iota ≈ 0.15 with clean nested surfaces → BoozerLS is the bug, not the coils. Unlikely given BFGS evidence.
-- iota ∈ (0, 0.15), clean nested surfaces → stage 2 coils produce *some* transform but missed the target. Branch A.
-- iota ≈ 0 or islands/chaos → helical content almost absent. Branch A (fixable with better objective) or Branch B (hardware ceiling), disambiguated by a banana current scaling scan.
+**Poincare 51287878 RESULTS (2026-04-09) — helical amplitude hypothesis confirmed.** Field-line trace of the post-fix stage 2 coil field (16 kA banana / 100 kA × 20 TF), 32 MPI ranks, `tmax=7000`, `tol=1e-7`, `max_transits=2000`, 32 starting lines. Results from `/pscratch/sd/h/hayashiw/banana_drivers_outputs/stage2_poincare.npz`:
+- **Inner 10 lines** ($R\in[0.916, 0.958]$ m): survived `tmax=7000` with ~530 plane-0 crossings each; $\iota\approx 0 \pm 5\text{e-}4$. Essentially a trivial axisymmetric core.
+- **Outer 22 lines** ($R\in[0.963, 1.060]$ m): escaped the classifier after 30–65 crossings; $\iota\approx -0.008$ to $-0.013$. No nested topology outside the very innermost core at baseline; outer lines wander in $R\in[0.516, 1.078]$.
+- **Max $|\iota|$ = 0.013 vs target 0.15** — 12× short of target, matching the napkin helical/TF NI ratio of $160/2000 = 1/12.5$.
 
-**Branching plan (post-Poincare):**
+**Diag 51304473 RESULTS (2026-04-09) — no $\iota=0.15$ basin exists.** Reran `local/diag_iota_basin.py` on the post-fix stage 2 surface with capped `bfgs_maxiter=300, newton_maxiter=10` and added scenario C (iota scan over 8 initial values) + scenario D (surface Fourier fingerprint). Ran as 30-min debug job, completed cleanly (earlier retries 51288616/51301292/51301574 hit a `$SLURM_SUBMIT_DIR` path bug and then walltime before the caps were in place).
+
+| Scenario | Result |
+|---|---|
+| [A] init coils 10 kA | BFGS $\iota=9.5\text{e-}6$ (300 iter); Newton diverged to $\iota=-0.265$, $\|\nabla\|_\infty=1.2\text{e}6$ |
+| [B] stage 2 coils 16 kA | BFGS $\iota=-6.4\text{e-}5$ (300 iter); Newton $\iota=-2.5\text{e-}6$, $\|\nabla\|_\infty=4.3\text{e-}2$ |
+| [C] $\iota$ scan $\{0.001,\ldots,0.3\}$ | 0.001→$-1.4\text{e-}4$ / 0.010→$-2.2\text{e-}5$ / **0.050→$+5.89$ (DIV)** / 0.100→$+2.9\text{e-}3$ / 0.150→$-2.5\text{e-}6$ / 0.200→$-5.1\text{e-}5$ / 0.250→$+2.1\text{e-}5$ / **0.300→$-38.85$ (DIV)** |
+| [D] surface fingerprint | $R_0=0.9272$ m, $r_0=0.0730$ m, aspect 12.70, volume $0.09755$ m³, non-axisym metric $1.09\text{e-}2$ (tokamak-like but NOT circular) |
+
+Every physically reasonable $\iota_\text{init}$ collapses to $\iota\approx 0$; the two divergent trials ($\iota_\text{init}\in\{0.05, 0.3\}$) jump to nonsensical values and are not evidence of alternative basins. The surface is mildly stellarator-shaped (not a circular torus), so the collapse is NOT a degenerate "axisymmetric surface → $\iota=0$ trivially" artifact — it is a real statement about the coil field's helical content on this surface family.
+
+**Combined verdict:** Poincare's empirical $|\iota|\leq 0.013$ and the diag $\iota$-scan both tell the same story. The stage 2 coils physically do not carry enough helical NI to support $\iota=0.15$ on anything resembling this VMEC LCFS. No tuning of BoozerLS, objective weights, or warm-start state can navigate to a basin that does not exist.
+
+**Branching plan (resolved post-Poincare + post-diag):**
+
+**Branch A is dead.** Any stage-2-side fix that tries to steer the objective toward $\iota=0.15$ (A1/A2/A3/A4) is chasing a basin the hardware cannot produce. Keeping A2's "solve $(\iota, G)$ on the fixed surface each inner eval, penalize $(\iota - 0.15)^2$" code for reference could be useful as a cheap diagnostic ($\iota_\text{coil}$ per evaluation), but not as an optimization lever.
+
+**Branch B is forced.** The device design target $\iota=0.15$ is inconsistent with the fixed banana/TF hardware. The pipeline must be rebuilt from a lower, empirically-derived $\iota_\text{max}$:
+1. **Coil capability probe (diag iii)** — cold, no warm start. TF + banana at `current_init`, test surface = simple circular torus at $R=0.925$ with `a` from volume target. Maximize $\iota$ on this test surface over banana DOFs (shape + current up to 16 kA) via BoozerLS + `Iotas()`. No SquaredFlux. Answers "what $\iota_\text{max}$ can this hardware deliver at baseline volume?" independent of stage 1 assumptions.
+2. **Banana current scaling scan (diag ii)** — reuse stage 2 coil geometry, scale `banana_current $\in \{8, 16, 32, 64, 128\}$ kA`, re-trace each with `poincare_tracing.py`. Disambiguates "current cap is the bottleneck" vs "shape family is the bottleneck". This is cheap because it reuses existing infrastructure; worth running even though hardware $I_\text{max}=16$ kA is fixed, to understand the geometric ceiling.
+3. **Cold-start stage 1** (helper `utils/cold_start_vmec_inputs.py`) with $\iota_\text{target} = \iota_\text{max}$ from (1) and a hardcoded rotating-ellipse boundary with non-zero helical content.
+4. **Rerun stage 2** (unchanged) and singlestage against the new equilibrium.
+
+**Branching plan (legacy — retained for context):**
 
 Three cheap diagnostics to choose the branch:
 - **(i) Poincare 51287878** (queued) — primary iota measurement.
@@ -122,14 +158,13 @@ Branch A stack: **A2 + A3 + A4**, all reuse existing stage 2 infrastructure.
 
 Cold-start helper is valuable regardless of branch — unblocks Pareto scans and makes the pipeline self-contained. Difference is whether it's on the critical path.
 
-**Recommended sequencing:**
-1. Wait for Poincare 51287878 — primary diagnostic.
-2. Submit `local/diag_iota_basin.py` (via temporary `local/run_diag_iota_basin.sh`, a one-off sbatch script; NOT part of `submit.sh`). Runs the [A]/[B]/[C]/[D] scenarios from the post-fix state including the iota scan and surface fingerprint.
-3. Implement diagnostic (ii) as a small script that reuses `poincare_tracing.py`'s InterpolatedField with a banana-current scale parameter.
-4. Based on (i)+(ii) outcome:
-   - iota ≥ 0.08 at baseline or reachable at ≤ 20 kA → **Branch A**. Implement A2 first (iota-aware stage 2 objective). A3/A4 as follow-ups if A2 doesn't close the gap.
-   - iota < 0.05 saturation → run diag (iii). Use its `iota_max` to pick cold-start target. Implement cold-start stage 1 + rerun pipeline.
-5. Cold-start helper built in parallel either way.
+**Recommended sequencing (post-diag 51304473):**
+1. [x] Poincare 51287878 — done, $|\iota|\leq 0.013$.
+2. [x] Diag 51304473 — done, no $\iota=0.15$ basin; 8-point $\iota$ scan all collapse/diverge.
+3. [ ] **Diag (iii) coil capability probe** — cold, circular test surface, maximize $\iota$ over banana DOFs. Answers "what $\iota_\text{max}$ is actually achievable?" This is now the gating diagnostic for the rest of the pipeline — without it we have no principled target for cold-start stage 1.
+4. [ ] **Diag (ii) banana current scaling scan** — parallel to (iii); cheap Poincare sweep. Confirms whether 16 kA cap or shape family is the limiter. Useful cross-check on (iii).
+5. [ ] **Cold-start helper** `utils/cold_start_vmec_inputs.py` — derive VMEC boundary + phiedge + iota profile from (TF current, nfp, V, R₀, $\iota_\text{max}$). Unblocks Pareto scans regardless.
+6. [ ] **Cold-start stage 1** at $\iota_\text{target} = \iota_\text{max}$; then rerun stage 2 + singlestage end-to-end.
 
 **Open design questions (before implementation):**
 1. **A2's iota solve** — does SIMSOPT expose "fixed surface, optimize only (iota, G)"? Source check on `BoozerSurface.run_code` / `boozer_surface_residual` needed before committing to A2.

@@ -154,7 +154,7 @@ stage1:
 boozer:
   mpol: 8
   ntor: 6
-  constraint_weight: 1.0   # BoozerLS constraint weight
+  constraint_weight: 1.0e+3 # BoozerLS constraint weight
 
 # ── Physics targets (singlestage) ───────────────────────────────────────────
 targets:
@@ -186,13 +186,23 @@ stage2_weights:
   curvature: 1.0e-4
 
 # ── Stage 2 optimizer (legacy 'weighted' mode, L-BFGS-B) ────────────────────
+# Stage 2 convergence philosophy (2026-04-09): truncated iteration budget,
+# gtol and ftol both set to unreachable (1e-15) so the exit is always the
+# maxiter cap. Stage 2 is only required to produce a "good enough to warm
+# start singlestage" state — the real stage 2 health check is a post-run
+# Poincare trace (iota + surface nesting), not L-BFGS-B's gradient norm.
+# Matches jhalpern30's banana_coil_solver.py philosophy but with a larger
+# budget (600 vs 300). Run 51286115 showed the landscape plateaus at
+# grad_inf≈1e-8 with no further meaningful descent — pushing gtol/ftol tighter
+# buys 7th-decimal SquaredFlux improvements that don't change the coil-field
+# iota (confirmed by Poincare 51287878), so we stop wasting iterations on it.
 stage2_optimizer:
-  maxiter: 1000
+  maxiter: 600
   maxcor: 300
   maxfun: 10000
   tol: 1.0e-15
-  ftol: 1.0e-15
-  gtol: 1.0e-12
+  ftol: 1.0e-15    # unreachable — force maxiter as the exit path
+  gtol: 1.0e-15    # unreachable — force maxiter as the exit path
 
 # ── Stage 2 ALM (augmented Lagrangian method) ──────────────────────────────
 # f=None and all objectives (including SquaredFlux) live in the constraint list.

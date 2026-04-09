@@ -81,7 +81,7 @@ Drivers read select parameters from environment variables to support Pareto scan
 All drivers must use `range="field period"` when creating surfaces for the BoozerSurface. This gives quadpoints_phi in `[0, 1/nfp)` (one full field period). Do NOT use `range="half period"` (gives only half a period — caused a bug where stage 2 JSON contained incorrect surface domains) or `range="full torus"` (unnecessary — SquaredFlux averages over whatever points are given, and stellsym makes one period sufficient).
 
 ### Boozer Method
-- Use BoozerLS for singlestage baseline (`constraint_weight > 0 → boozer_type='ls'`, set in `boozer.constraint_weight` in config.yaml — currently 1.0).
+- Use BoozerLS for singlestage baseline (`constraint_weight > 0 → boozer_type='ls'`, set in `boozer.constraint_weight` in config.yaml — currently 1.0e+3). A larger constraint weight anchors BoozerLS's surface-label penalty more firmly against the Boozer residual, reducing drift into the spurious iota=0 basin (see PLAN.md helical amplitude hypothesis section).
 - BoozerExact deferred — revisit for stochastic optimization or tighter residuals.
 - Stage 1 and stage 2 do **not** solve a BoozerSurface. Stage 1 builds a surface via `SurfaceXYZTensorFourier.least_squares_fit(gamma)` from the optimized VMEC equilibrium; stage 2 loads that surface as-is and uses it only as a fixed evaluation grid for `SquaredFlux`. Only singlestage (`03_singlestage_driver.py`) calls `boozersurface.run_code(...)` and modifies the surface DOFs.
 
@@ -133,7 +133,7 @@ Two presets control the inner-loop philosophy (`stage2_alm.preset` in config.yam
 Individual config keys and env vars override preset defaults. Resolution order: env var > config.yaml key > preset default.
 
 ### Singlestage solver: BoozerLS L-BFGS-B
-- Uses BoozerLS (`constraint_weight > 0 → boozer_type='ls'`) with `constraint_weight=1.0` from `config.yaml`.
+- Uses BoozerLS (`constraint_weight > 0 → boozer_type='ls'`) with `constraint_weight=1.0e+3` from `config.yaml`.
 - Fixed-weight scalar objective (nonQS + Boozer residual + iota + length + coil-coil + coil-surface + curvature + current). ALM is **not** yet ported to singlestage — see PLAN.md `deferred` section.
 - Boozer residual target < 1e-4 minimum acceptable.
 

@@ -369,15 +369,26 @@ def build_interpolated_field(bs, surf, nfp, stellsym, nr, nphi_interp, degree):
 def make_start_points(surf, nlines, extend_frac=0.10):
     """Create starting points at Z=0 midplane from magnetic axis to beyond surface.
 
-    Points are spaced linearly in R from the magnetic axis (R_axis) to the
-    outboard edge of the surface plus a margin.  All points lie on the Z=0
-    midplane at phi=0.
+    Points are spaced linearly in R from an estimated magnetic axis (R_axis)
+    to the outboard midplane edge of the surface plus a margin.  All points
+    lie on the Z=0 midplane at phi=0.
+
+    R_axis is taken as the mean R over ALL quadpoints of the poloidal slice
+    at phi=0, NOT the arithmetic mean of midplane R_inboard and R_outboard.
+    For a surface parametrized uniformly in a straight-field-line-ish angle,
+    this centroid is pulled toward the inboard side for positive triangularity
+    (more arc length on the outboard "bulge" vs. a pinched inboard, with the
+    quadpoint distribution approximately uniform in theta) and toward the
+    outboard side for negative triangularity — mirroring the Shafranov-like
+    axis shift inferred from the shape alone. The arithmetic midplane mean
+    assumes R_axis is always halfway between inboard and outboard, which is
+    only true for an up-down-symmetric ellipse with zero triangularity.
     """
     cs0 = surf.cross_section(0)
     cs0_r = np.sqrt(cs0[:, 0]**2 + cs0[:, 1]**2)
     cs0_z = cs0[:, 2]
 
-    # Find R values near Z=0
+    # Midplane edges (used only to set the outer extent of the starting sweep)
     z_tol = 0.02
     near_midplane = np.abs(cs0_z) < z_tol
     if np.sum(near_midplane) < 2:
@@ -387,7 +398,11 @@ def make_start_points(surf, nlines, extend_frac=0.10):
     r_inboard = r_mid.min()
     r_outboard = r_mid.max()
 
-    r_axis = (r_inboard + r_outboard) / 2
+    # # Quadpoint-centroid estimate of the axis R (triangularity-aware)
+    # r_axis = float(cs0_r.mean())
+    r_axis_midplane = 0.5 * (r_inboard + r_outboard)  # kept only for logging
+    r_axis = 0.25 * (3*r_inboard + r_outboard) # heuristic shift inward to cover Rax
+
     minor_radius = (r_outboard - r_inboard) / 2
     margin = minor_radius * extend_frac
 
@@ -395,11 +410,13 @@ def make_start_points(surf, nlines, extend_frac=0.10):
     Z0 = np.zeros(nlines)
 
     mprint(f'  Starting points: {nlines} lines at Z=0, phi=0')
-    mprint(f'    R_axis     = {r_axis:.5f} m')
-    mprint(f'    R_inboard  = {r_inboard:.5f} m')
-    mprint(f'    R_outboard = {r_outboard:.5f} m')
-    mprint(f'    minor_r    = {minor_radius:.5f} m')
-    mprint(f'    margin     = {margin:.5f} m ({extend_frac:.0%} of minor radius)')
+    mprint(f'    R_axis (quadpoint centroid) = {r_axis:.5f} m')
+    mprint(f'    R_axis (midplane mean)      = {r_axis_midplane:.5f} m  '
+           f'(shift: {r_axis - r_axis_midplane:+.5f} m)')
+    mprint(f'    R_inboard                   = {r_inboard:.5f} m')
+    mprint(f'    R_outboard                  = {r_outboard:.5f} m')
+    mprint(f'    minor_r                     = {minor_radius:.5f} m')
+    mprint(f'    margin                      = {margin:.5f} m ({extend_frac:.0%} of minor radius)')
     mprint(f'    R range: [{R0[0]:.5f}, {R0[-1]:.5f}] m')
 
     return R0, Z0
