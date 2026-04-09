@@ -86,10 +86,17 @@ if STAGE2_CURRENT_MODE not in ('free', 'penalized', 'fixed'):
 # Warm-start
 INIT_BSURF_FILE = os.path.abspath(cfg['warm_start']['init_bsurf_filepath'])
 
-# Objective thresholds (hardware constraints — not relaxable)
+# Objective thresholds (hardware constraints — not relaxable).
+# curvature_max_stage2 is already a stage-2-only softening of the 20 m^-1
+# hardware limit (which is enforced by singlestage). It is exposed here via
+# BANANA_CURV_MAX_S2 for experiments near the curvature cliff — do NOT use
+# this override to relax the actual singlestage/hardware threshold.
 LENGTH_THRESHOLD = cfg['thresholds']['length_max']
 CC_THRESHOLD     = cfg['thresholds']['coil_coil_min']
-CURV_THRESHOLD   = cfg['thresholds']['curvature_max_stage2']
+CURV_THRESHOLD   = float(os.environ.get(
+    'BANANA_CURV_MAX_S2',
+    cfg['thresholds']['curvature_max_stage2']
+))
 
 # Mode selector
 STAGE2_MODE = os.environ.get('BANANA_STAGE2_MODE', cfg.get('stage2_mode', 'alm')).lower()
@@ -104,7 +111,10 @@ ALM_MAXFUN       = int(cfg['stage2_alm']['maxfun'])
 ALM_MAXITER_LAG  = int(os.environ.get('BANANA_MAXITER_LAG', cfg['stage2_alm']['maxiter_lag']))
 ALM_GRAD_TOL     = float(cfg['stage2_alm']['grad_tol'])
 ALM_C_TOL        = float(cfg['stage2_alm']['c_tol'])
-ALM_DOF_SCALE    = float(cfg['stage2_alm'].get('dof_scale', 1.0))
+ALM_DOF_SCALE    = float(os.environ.get(
+    'BANANA_DOF_SCALE',
+    cfg['stage2_alm'].get('dof_scale', 1.0)
+))
 ALM_SQF_TARGET   = float(cfg['stage2_alm']['sqf_target'])
 
 # Legacy weighted-mode params

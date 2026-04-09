@@ -73,6 +73,8 @@ Drivers read select parameters from environment variables to support Pareto scan
 - `BANANA_CURRENT_MODE_S2` — `fixed` (default), `penalized`, or `free` — how stage 2 treats the banana current DOF (see "Stage 2 current handling" below)
 - `BANANA_TAU` — stage 2 ALM penalty growth factor override
 - `BANANA_MAXITER_LAG` — stage 2 ALM outer-loop iteration cap override
+- `BANANA_DOF_SCALE` — stage 2 ALM inner-loop step limiter (default 0.1). Lower (e.g. 0.05, 0.03) to prevent large steps from overshooting the `LpCurveCurvature` cliff at $\kappa_\text{max}$
+- `BANANA_CURV_MAX_S2` — stage 2 curvature threshold override (default 40 m⁻¹). Stage-2-only softening of the 20 m⁻¹ hardware limit enforced by singlestage; use only to give stage 2 more headroom near the curvature cliff
 
 ### Surface Quadpoints Range
 All drivers must use `range="field period"` when creating surfaces for the BoozerSurface. This gives quadpoints_phi in `[0, 1/nfp)` (one full field period). Do NOT use `range="half period"` (gives only half a period — caused a bug where stage 2 JSON contained incorrect surface domains) or `range="full torus"` (unnecessary — SquaredFlux averages over whatever points are given, and stellsym makes one period sufficient).
