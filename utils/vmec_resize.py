@@ -1,4 +1,4 @@
-"""vmec_resize_driver.py
+"""utils/vmec_resize.py
 
 One-time preprocessing step: produce the stage 1 seed wout by extracting an
 inner flux surface of the original wout, rescaling it to the target major
@@ -33,7 +33,14 @@ APPROACH
    with hard BC iota(s_new=1) = iota_orig(s=inner_s)
 5. Scale magnetic axis initial guess by the same factor
 6. Re-solve VMEC at a multi-grid ns ramp [13, 25, 51]
-7. Save as inputs/wout_stage1_seed.nc (path from config.yaml)
+7. Rescale phiedge so VMEC rbtor matches the actual TF coil rbtor
+   (mu_0 * N_tf * I_tf / (2*pi)), then re-solve VMEC at the finest ns.
+   This is critical: the seed wout was sized for a device with stronger TF
+   coils than the hardware (100 kA x 20 = 0.4 T*m vs. seed ~0.95 T*m), so
+   the resulting |B| was ~2.3x too high and coils could not support the
+   stage 1 equilibrium as a flux surface. Since stage 1 is a zero-beta
+   equilibrium, |B| is linear in phiedge and iota is independent of it.
+8. Save as inputs/wout_stage1_seed.nc (path from config.yaml)
 
 CONFIG KEYS (stage1_resize block)
 ---------------------------------
@@ -44,8 +51,8 @@ CONFIG KEYS (stage1_resize block)
   mpol, ntor         : VMEC resolution for the re-solve
   ns_array, niter_array, ftol_array : multi-grid convergence sequence
 
-Run once before stage 1:
-  python vmec_resize_driver.py
+Run once before stage 1 (from the banana_drivers root):
+  python utils/vmec_resize.py
 """
 
 import os
@@ -60,7 +67,7 @@ from simsopt.mhd import Vmec
 # ---------------------------------------------------------------------------
 # Load configuration
 # ---------------------------------------------------------------------------
-_base_dir = os.path.dirname(os.path.abspath(__file__))
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 with open(os.path.join(_base_dir, 'config.yaml')) as f:
     cfg = yaml.safe_load(f)
 
@@ -81,6 +88,7 @@ FTOL_ARRAY    = list(rs['ftol_array'])
 TEMPLATE_INPUT = os.path.abspath(
     os.path.join(_base_dir, '..', 'simsopt', 'src', 'simsopt', 'mhd', 'input.default')
 )
+# _base_dir already points at banana_drivers/, so '..' resolves to hybrid_torus/.
 OUT_DIR = os.path.abspath(os.path.join(_base_dir, 'outputs_vmec_resize'))
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(OUT_WOUT_FILE), exist_ok=True)
@@ -226,15 +234,59 @@ print(f"  ncurr={vmec.indata.ncurr}, phiedge={vmec.indata.phiedge:.4e}")
 print(f"  ns_array={NS_ARRAY}, niter_array={NITER_ARRAY}")
 
 # ---------------------------------------------------------------------------
-# STEP 4 — Run VMEC
+# STEP 4 — Run VMEC (first pass, to discover rbtor)
 # ---------------------------------------------------------------------------
-print("\nRunning VMEC ...")
+print("\nRunning VMEC (first pass) ...")
 vmec.run()
-os.chdir(_orig_dir)
-print("VMEC run complete.")
+print("VMEC first pass complete.")
 
 # ---------------------------------------------------------------------------
-# STEP 5 — Verify
+# STEP 5 — Rescale phiedge so rbtor matches the actual TF coil rbtor
+# ---------------------------------------------------------------------------
+# The seed wout's phiedge was sized for a device with stronger TF coils than
+# the real hardware. Since stage 1 is a zero-beta (vacuum-like) fixed-boundary
+# equilibrium, |B| scales linearly with phiedge, and iota is independent of
+# phiedge (iota = d psi_p / d psi_t, both scale together). So a one-shot
+# phiedge rescale adjusts |B| without touching surface shape or iota profile.
+#
+# Target: rbtor_target = mu_0 * N_tf * I_tf / (2*pi) (vacuum toroidal field
+# times major radius for a uniform-current set of planar TF coils).
+tf_N       = int(cfg['tf_coils']['num'])
+tf_I       = float(cfg['tf_coils']['current'])
+MU0        = 4.0e-7 * np.pi
+rbtor_target = MU0 * tf_N * tf_I / (2.0 * np.pi)
+
+wout_pass1 = netCDF4.Dataset(vmec.output_file, 'r')
+rbtor_pass1 = float(wout_pass1.variables['rbtor'][:])
+b0_pass1    = float(wout_pass1.variables['b0'][:])
+wout_pass1.close()
+
+phiedge_rescale = rbtor_target / rbtor_pass1
+phiedge_corrected = vmec.indata.phiedge * phiedge_rescale
+
+print(f"\nPhiedge correction for TF coil match:")
+print(f"  TF coils: {tf_N} x {tf_I/1e3:.1f} kA")
+print(f"  rbtor target (coils):   {rbtor_target:.6e} T*m")
+print(f"  rbtor from VMEC pass 1: {rbtor_pass1:.6e} T*m")
+print(f"  b0    from VMEC pass 1: {b0_pass1:.6e} T")
+print(f"  phiedge rescale factor: {phiedge_rescale:.6f}")
+print(f"  phiedge old:            {vmec.indata.phiedge:.6e} Wb")
+print(f"  phiedge new:            {phiedge_corrected:.6e} Wb")
+
+# Re-run VMEC with corrected phiedge. vmec.run() calls reinit() each time and
+# starts from scratch (not a restart), so keep the full ns ramp for
+# convergence. The second pass doubles preprocessing time, which is fine for
+# a one-off setup step.
+vmec.indata.phiedge = phiedge_corrected
+vmec.need_to_run_code = True  # run() is a no-op otherwise
+
+print(f"\nRunning VMEC (second pass, phiedge corrected) ...")
+vmec.run()
+os.chdir(_orig_dir)
+print("VMEC second pass complete.")
+
+# ---------------------------------------------------------------------------
+# STEP 6 — Verify
 # ---------------------------------------------------------------------------
 print("\n" + "="*72)
 print("VERIFICATION: New LCFS vs. Seed s=" + str(VMEC_S) + " Surface")
@@ -251,11 +303,19 @@ print(f"  {'Minor radius r0 (m)':<30} {surf_target.minor_radius():<30.6f} {new_s
 
 wout_new = netCDF4.Dataset(vmec.output_file, 'r')
 iotaf_new = wout_new.variables['iotaf'][:]
+rbtor_new = float(wout_new.variables['rbtor'][:])
+b0_new    = float(wout_new.variables['b0'][:])
+phi_new   = wout_new.variables['phi'][:]
 iota_orig_at_s = float(np.interp(VMEC_S, s_orig, iotaf_orig))
 print(f"\nIota comparison:")
 print(f"  Seed iota at s={VMEC_S}:           {iota_orig_at_s:.6f}")
 print(f"  New iota at s=1 (LCFS):       {float(iotaf_new[-1]):.6f}")
 print(f"  New iota at s=0 (axis):       {float(iotaf_new[0]):.6f}")
+print(f"\nField magnitude comparison:")
+print(f"  Target rbtor (TF coils):      {rbtor_target:.6e} T*m")
+print(f"  New rbtor (pass 2):           {rbtor_new:.6e} T*m")
+print(f"  New b0 (pass 2):              {b0_new:.6e} T")
+print(f"  New phiedge:                  {float(phi_new[-1]):.6e} Wb")
 wout_new.close()
 
 print(f"\nLeading Fourier modes (VMEC coordinates):")
@@ -270,7 +330,7 @@ for m, n_idx, attr in [(0, 0, 'rc'), (1, 0, 'rc'), (1, 0, 'zs'), (2, 0, 'rc')]:
         pass
 
 # ---------------------------------------------------------------------------
-# STEP 6 — Copy wout to the configured output path
+# STEP 7 — Copy wout to the configured output path
 # ---------------------------------------------------------------------------
 shutil.copy2(vmec.output_file, OUT_WOUT_FILE)
 print(f"\nResized wout copied to:\n  {OUT_WOUT_FILE}")

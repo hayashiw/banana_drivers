@@ -173,7 +173,7 @@ if COLD_START:
     surf.set_zs(1, 0, COLD_A)
     proc0_print(f'  R0={COLD_R0}, a={COLD_A}, phiedge={COLD_PHIEDGE}')
 else:
-    # Warm start: the seed wout has been pre-processed by vmec_resize_driver.py
+    # Warm start: the seed wout has been pre-processed by utils/vmec_resize.py
     # to have LCFS (s=1) == target plasma boundary, at the correct major radius
     # and enclosed toroidal flux. Stage 1 just loads it as-is — no rescaling.
     proc0_print(f'Warm start: seeding boundary from {WOUT_FILE}')

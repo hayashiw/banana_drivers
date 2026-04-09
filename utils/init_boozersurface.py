@@ -108,7 +108,7 @@ def load_vmec_surface(wout_path, cfg):
     ps = cfg['plasma_surface']
     bz = cfg['boozer']
 
-    # The stage 1 seed is produced by vmec_resize_driver.py with LCFS == target
+    # The stage 1 seed is produced by utils/vmec_resize.py with LCFS == target
     # plasma boundary at the correct scale, and stage 1 preserves this. No
     # rescaling is needed here — the extracted surface is already at vmec_R.
     surface_vmec = SurfaceRZFourier.from_wout(

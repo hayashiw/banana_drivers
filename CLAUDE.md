@@ -35,11 +35,11 @@ banana_drivers/
   poincare_tracing.py                # Poincare field-line tracing + raw surface overlay
   patch_surface_quadpoints.py        # One-shot patcher for legacy half-period BoozerSurface JSON files
   boozxform_driver.py                # Legacy booz_xform surface extraction (superseded by stage 1)
-  vmec_resize_driver.py              # One-time preprocessing: extract s=0.24 of original seed wout and re-solve VMEC to produce wout_stage1_seed.nc (LCFS = target plasma boundary)
   inputs/                            # wout seed, stage1_boozersurface_opt.json, vf_biotsavart.json
   outputs/                           # Local fallback only — primary outputs go to $SCRATCH/banana_drivers_outputs/
   utils/
     init_boozersurface.py            # Build TF + banana coils + plasma surface → BoozerSurface (used by stage 1 + CLI)
+    vmec_resize.py                   # One-time preprocessing: extract s=0.24 of original seed wout and re-solve VMEC (two-pass, rbtor-matched) to produce wout_stage1_seed.nc
     output_dir.py                    # Resolve output directory ($SCRATCH → ./outputs fallback)
     post_process.py                  # Metrics extraction and CSV comparison
     generate_vf_coils.py             # VF coil generation for finite-current
@@ -98,15 +98,17 @@ Three modes selectable via `current_mode_stage2` in config.yaml or `BANANA_CURRE
 
 `CurrentPenaltyWrapper` (in `utils/current_penalty.py`) is the adapter that makes `ScaledCurrent` compatible with `QuadraticPenalty`; shared between stage 2 (penalized mode) and singlestage. The gradient uses `sign(I) * scaled_current.vjp([1.0])` — the `vjp` carries the `ScaledCurrent` scale factor via SIMSOPT's chain rule, so a naive `sign(I)` alone would underweight the gradient by ~10^4.
 
-### Stage 1 seed: vmec_resize_driver.py preprocessing
-The original `wout_nfp22ginsburg_000_014417_iota15.nc` was sized such that its **s=0.24** flux surface matched the physical plasma boundary at R0=0.925 m; the outer 76% of the volume was auxiliary (see jhalpern30/simsopt STAGE_2/banana_coil_solver.py lines 25-27, 304 for the reference extraction).
+### Stage 1 seed: utils/vmec_resize.py preprocessing
+The original `wout_nfp22ginsburg_000_014417_iota15.nc` was sized such that its **s=0.24** flux surface matched the physical plasma boundary at R0=0.925 m; the outer 76% of the volume was auxiliary (see jhalpern30/simsopt STAGE_2/banana_coil_solver.py lines 25-27, 304 for the reference extraction). It was also sized for a stronger TF field than the real hardware (~0.95 T·m rbtor vs. the 100 kA × 20 TF coil set's 0.4 T·m), so the seed |B| was ~2.3× too strong for the actual coils.
 
-`vmec_resize_driver.py` is a one-time preprocessing step that:
+`utils/vmec_resize.py` is a one-time preprocessing step that:
 1. Loads s=0.24 of the original seed and rescales coordinates by `vmec_R / major_radius()`
 2. Rescales enclosed toroidal flux by `scale²` (phi is linear in s; coordinate rescale adds the length² factor)
 3. Remaps the iota profile to the new domain `s_new = s_orig / 0.24` via a constrained polynomial fit (hard BC `iota(s_new=1) = iota_orig(s=0.24)`)
 4. Scales the magnetic axis guess by the same factor
-5. Re-solves VMEC at a multi-grid ns ramp → writes `inputs/wout_stage1_seed.nc` whose **LCFS (s=1) IS the target plasma boundary**
+5. Re-solves VMEC at a multi-grid ns ramp (first pass)
+6. Rescales phiedge so VMEC rbtor matches the actual TF coil rbtor (`mu_0 * N_tf * I_tf / (2*pi)`), then re-solves VMEC (second pass). Zero-beta equilibrium means |B| is linear in phiedge and iota is independent of it, so this corrects field magnitude without touching surface shape or iota profile.
+7. Writes `inputs/wout_stage1_seed.nc` whose **LCFS (s=1) IS the target plasma boundary** and whose rbtor matches the hardware TF coils
 
 Stage 1 then warm-starts from this seed with no boundary rescaling — the warm-start branch of `01_stage1_driver.py` loads the LCFS directly. Downstream drivers (`utils/init_boozersurface.py`, `03_singlestage_driver.py`) extract `plasma_surface.vmec_s = 1.0` (i.e., the LCFS of the stage 1 output wout) and never rescale.
 

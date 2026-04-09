@@ -44,13 +44,13 @@ All drivers are submitted via `submit.sh`, which handles SLURM queue selection a
 | Script | Purpose | Status |
 |--------|---------|--------|
 | `boozxform_driver.py` | Run booz_xform to extract Boozer-coordinate surface + equilibrium iota/G | Diagnostic tool |
-| `vmec_resize_driver.py` | Resize VMEC LCFS to match target plasma dimensions | Superseded by stage 1 |
 
 ### Utilities (`utils/`)
 
 | Script | Purpose |
 |--------|---------|
 | `utils/init_boozersurface.py` | Build TF+banana coils and plasma surface, assemble BoozerSurface. Importable functions + standalone CLI. |
+| `utils/vmec_resize.py` | One-time preprocessing: extract s=0.24 of original seed wout and re-solve VMEC (two-pass, rbtor-matched to hardware TF coils) to produce `inputs/wout_stage1_seed.nc`. |
 | `utils/output_dir.py` | Resolve output directory: `$BANANA_OUT_DIR` → `$SCRATCH/banana_drivers_outputs/` → `./outputs/` |
 | `utils/post_process.py` | Extract physics metrics from optimized BoozerSurface files, append to CSV |
 | `utils/generate_vf_coils.py` | Generate VF coil BiotSavart for finite-current cases → `inputs/vf_biotsavart.json` |

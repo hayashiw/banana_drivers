@@ -1,6 +1,6 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-09 (Stage 1 seed wout now produced via `vmec_resize_driver.py` preprocessing — extracts s=0.24 of original seed, re-solves VMEC so LCFS = target plasma boundary; stage 1 warm-start rescaling removed; `plasma_surface.vmec_s` changed 0.24 → 1.0; `iota_axis` dropped from stage 1 objective; targets rescaled to new seed actuals)
+Last updated: 2026-04-09 (Singlestage 51286237 FAILED; revised diagnosis — **helical amplitude hypothesis**. Stage 2 minimizes SquaredFlux on a fixed VMEC LCFS that encodes iota=0.15 by construction, but that's a necessary-not-sufficient condition. BoozerLS in singlestage measures the coil field's TRUE iota (which may be ≈0) on its own flux surface. Poincare 51287878 queued to measure iota empirically. Branching plan drafted below: Branch A = stage-2-side iota-aware objective; Branch B = cold-start pipeline + coil capability probe if hardware can't reach target iota.)
 
 ## Current Status
 
@@ -34,15 +34,117 @@ Output file pruning applied to stage 2 and singlestage drivers — VTK and subse
 
 Individual config keys and env vars override preset defaults (resolution: env var > config key > preset).
 
+**Singlestage iota basin failure traced to TF coil rbtor mismatch (2026-04-09):** Singlestage run 51281515 (first end-to-end with the resized seed) failed with BoozerLS landing at iota≈2e-4 instead of 0.15. Diagnostic driver (job 51283943, moved to `local/diag_iota_basin.py`) isolated whether the failure originated in stage 2 coils or was already present at init:
+
+| Scenario | |B.n|/|B| mean | BFGS iota | Newton result |
+|---|---|---|---|
+| [A] fresh init coils (10 kA) | 4.70e-2 | 1.6e-8 | diverge to 72.7 |
+| [B] stage 2 coils (16 kA)    | 2.28e-2 | 2.3e-4 | diverge to -30.8 |
+
+Both fail → **init coils were already in the wrong basin**; stage 2 was not the culprit. Coils delivered |B|≈0.43 T on a surface whose shape encoded iota=0.15 at |B|≈1.05 T. Root cause: the resized seed (and hence stage 1 output) inherited the original wout's phiedge scale, which was sized for a device with ~2.3× stronger TF than the actual 100 kA × 20 hardware. Specifically:
+- Target `rbtor = μ₀·N_tf·I_tf/(2π) = 4.00e-1 T·m` (vacuum toroidal field × major radius for uniform-current planar TF coils)
+- Resized seed (pre-fix): `rbtor = 9.51e-1 T·m`, `b0 = 1.065 T` — 2.3× too strong
+- BiotSavart coils: `|B|≈0.43 T` — correct for the hardware
+
+jhalpern30's reference pipeline has the same latent mismatch (TODO comment in `STAGE_2/banana_coil_solver.py` line 281 notes TF current needs updating). It never manifested there because their optimization didn't use a BoozerSurface solve that coupled surface shape to coil |B|.
+
+**Fix:** `utils/vmec_resize.py` is now two-pass. Pass 1 solves VMEC on the rescaled boundary with the length²-scaled phiedge (as before). Pass 2 reads `rbtor` from pass 1, computes `phiedge_new = phiedge_old · (rbtor_target / rbtor_pass1)`, sets `vmec.need_to_run_code = True`, and re-solves at full ns ramp. Zero-beta equilibrium means |B| is linear in phiedge and iota is independent of it, so this corrects field magnitude without touching shape or iota. Verified 2026-04-09: new seed has `phiedge=7.18e-3 Wb`, `b0=0.448 T`, `rbtor=4.00e-1 T·m` (target hit to machine precision), `iota_axis=0.148`, `iota_edge=0.120`, `R0=0.925 m`, `volume=0.0969 m³`, `aspect=12.70`. Shape and iota identical to pre-fix seed; only |B| changed.
+
+**File reorganization (2026-04-09):** `vmec_resize_driver.py` moved to `utils/vmec_resize.py` — it's a one-time preprocessing step, not a pipeline stage (no SLURM submission, no diagnostics CSV, no `$SCRATCH` routing). Matches `utils/init_boozersurface.py` pattern (importable functions + standalone CLI). `diag_iota_basin.py` moved to `local/` (one-off investigation tool preserved for reference).
+
+**Stage 1 rerun on corrected seed (job 51285086, 2026-04-09):** SUCCESS. Monotonic QS convergence across the three-step resolution ramp (6.33e-5 → 1.39e-5 → 9.92e-6), final `iota_edge=0.1497` (0.23% of target), `iota_axis=0.1532` (free), `aspect=12.7000`, `volume=0.09755 m³` (+0.9% drift, acceptable with current volume_weight), `b0=0.4445 T`, `rbtor=0.3981 T·m` (seed 0.4000 → output 0.3981, preserved through VMEC optimization to within 0.5%). Field magnitude is now consistent with the BiotSavart |B| from the 100 kA × 20 TF hardware. The ~6× QS improvement compared to earlier runs on this seed indicates the optimizer can work cleanly now that |B| no longer fights the coils.
+
+**Stage 2 rerun on corrected equilibrium (job 51286115, 2026-04-09):** SUCCESS. Ran in `weighted` mode (L-BFGS-B, config set to `stage2_mode: weighted`). 327 iterations, 208s runtime, `CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH`, `grad_norm=1.56e-8`. Final state: `sqflx=3.77e-4`, `coil_length=1.716 m` (✓ ≤ 1.75), `ccdist=0.0485 m` (grazing, 3% under 0.05 hardware min), `max_kappa=41.55` (grazing, 4% over 40 stage-2 soft limit). Profile matches the earlier weighted run 51268967 (sqflx 3.91e-4, length 1.726, ccdist 0.0491, max_kappa 41.31) — expected since weights are unchanged and the equilibrium surface is similar shape at ~half the field. The two grazing violations are soft in stage 2; singlestage enforces tighter thresholds (`curvature_max_ss=20`, and `coil_surface_min=0.02` plus curvature weighting) and should pull both back into spec.
+
+**Singlestage 51286237 FAILED (2026-04-09) — phiedge fix was necessary but NOT sufficient.** End-to-end run on the |B|-corrected pipeline (stage 1 51285086 → stage 2 51286115 → singlestage 51286237) still fails BoozerLS basin-finding:
+```
+BFGS   - False  iter=1500  iota= 0.00153   ‖grad‖=1.28e-5   (wrong basin, hit maxiter)
+NEWTON - False  iter=40    iota=-29.43     ‖grad‖=1.62e+9   (diverged, surface self-intersects)
+RuntimeError: Initial Boozer surface solve failed
+```
+Direct field-magnitude check on the new outputs:
+- `wout_stage1.nc`: rbtor=0.398 T·m ✓, iota_edge=0.150 ✓, volume=0.0975 ✓, aspect=12.70 ✓, |B|₀₀≈0.43 T
+- `stage2_boozersurface_opt.json`: BiotSavart |B| on surface ∈ [0.394, 0.473] T, mean 0.434 T
+- **VMEC and BiotSavart |B| now agree** (both ≈0.43 T) — the rbtor fix worked as designed
+
+So the |B| mismatch is gone, but BoozerLS still lands in the same iota≈0.0015 basin it did on the pre-fix surface. This **invalidates the diagnostic-driven hypothesis** that TF rbtor mismatch was the root cause: both diagnostic scenarios [A] (init coils) and [B] (stage-2 coils) in `local/diag_iota_basin.py` failed basin-finding on the pre-fix surface, but the same test now needs to be rerun on the post-fix surface to figure out what's actually going on.
+
+**Revised diagnosis:** The BoozerLS basin problem is a property of the objective landscape on this coil/surface geometry, not field scaling. Candidate explanations to investigate:
+1. **Initial iota value fed to BoozerLS** — `03_singlestage_driver.py` may be calling `run_code(iota=..., G=...)` with an iota that primes the wrong basin. (The stored bsurf has `res: none`, so the iota passed in is whatever the driver sets.) Check line ~240 in the driver.
+2. **Surface too axisymmetric** — if the stage 2 warm-start surface has small non-(0,0) harmonics relative to R₀, the circular-torus iota=0 basin is attractive and BFGS drifts into it. A "shape non-axisymmetry" metric (ratio of non-(0,0) harmonic amplitudes to R₀) would quantify this.
+3. **BoozerLS constraint_weight** — currently 1.0 in `config.yaml:boozer`. The least-squares formulation balances a surface-label penalty against the Boozer residual; a larger `constraint_weight` forces BoozerLS to stay close to the label and may prevent drift into iota=0.
+4. **BFGS vs Newton ordering** — BoozerLS's BFGS pre-solve finds iota=0.0015, then Newton takes over from that anchor and diverges. If BFGS landed in the correct basin, Newton would likely succeed. Need to feed BFGS a better starting iota (or use a different initial solver).
+
+**Next actions:**
+- Rerun `local/diag_iota_basin.py` on the NEW post-fix `stage2_boozersurface_opt.json` to isolate whether the wrong basin is a property of the new surface or the driver's init arguments
+- Check `03_singlestage_driver.py` around the initial BoozerSurface solve for the `iota` / `G` arguments it passes to `run_code`
+- Measure the non-axisymmetric Fourier content of the stage 2 surface (cheap: load `s.get_dofs()`, check (0,0) vs others)
+
+**Investigation results (2026-04-09, post-51286237):**
+1. **Init iota/G args are correct.** `03_singlestage_driver.py` line 241 passes `iota=TARGET_IOTA=0.15` and `G0 = 4π×10⁻⁷ × Σ|I_TF| = 2.513 T·m` (standard SIMSOPT convention, = 2π × rbtor). BFGS starts at iota=0.15 and drifts down to 0.0015 across 1500 iterations — not a wrong-init problem.
+2. **Surface is NOT "too axisymmetric".** Stage 2 warm-start surface ≡ Stage 1 VMEC LCFS (stage 2 loads it as a fixed eval grid):
+   - `R0=0.9272 m, r0=0.0730 m, aspect=12.70, volume=0.09755 m³`
+   - `std_phi(R)/mean_phi(R) = 1.09e-2`, `std_phi(Z) = 9.45e-3 m`
+   - `‖rc[n≠0]‖ = 0.01509` (~20% of m=1,n=0 amplitude 0.0734); `‖zs[n≠0]‖ = 0.01486`
+   - Ratio `(nonax R)/(axisym m=1) = 0.21` — real stellarator shaping, not a circular torus.
+3. **Revised hypothesis: helical amplitude mismatch.** VMEC's iota=0.15 is the rotational transform of the **VMEC MHD equilibrium** on this boundary under the prescribed phiedge; VMEC sculpts the shape via zero-β reverse solve to satisfy the specified iota profile. BoozerLS's iota is the rotational transform of the **actual Biot-Savart coil field**, found by adjusting surface DOFs so the coil field is tangent to them. These agree only if the coils actually produce a flux surface matching the VMEC LCFS with iota=0.15. Stage 2 drives `SquaredFlux = ∫(B·n)² dA` to 3.77e-4 on the fixed VMEC surface — a necessary but **not sufficient** condition. You can match a surface shape with a field that has very different iota content inside. Napkin: 10 banana × 16 kA = 160 kA helical vs 20 TF × 100 kA = 2 MA axisym → helical/axisym ≈ 1/12.5 → expected iota from the banana coils is O(0.01–0.05), consistent with the ≈0.0015 we're measuring if geometric coupling further dilutes it. At the pinned 16 kA, the coils may simply not carry enough helical NI to reproduce the iota=0.15 that VMEC baked into the boundary.
+
+**Poincare 51287878 QUEUED (2026-04-09) — the critical empirical test.** Field-line trace of the stage 2 coil field at 16 kA banana / 100 kA × 20 TF, using existing `poincare_tracing.py` defaults (32 MPI ranks, `tmax=7000`, `tol=1e-7`, `max_transits=2000`, `nr=30, nphi=20, degree=3`). Measures the true iota of the coil field independent of BoozerLS. Three possible outcomes:
+- iota ≈ 0.15 with clean nested surfaces → BoozerLS is the bug, not the coils. Unlikely given BFGS evidence.
+- iota ∈ (0, 0.15), clean nested surfaces → stage 2 coils produce *some* transform but missed the target. Branch A.
+- iota ≈ 0 or islands/chaos → helical content almost absent. Branch A (fixable with better objective) or Branch B (hardware ceiling), disambiguated by a banana current scaling scan.
+
+**Branching plan (post-Poincare):**
+
+Three cheap diagnostics to choose the branch:
+- **(i) Poincare 51287878** (queued) — primary iota measurement.
+- **(ii) Banana current scaling scan** — reuse stage 2 coil geometry, scale `banana_current ∈ {8, 16, 32, 64, 128} kA`, re-trace each. Tells us whether current cap or geometric coupling is the bottleneck. In vacuum linearity, iota scales with (helical NI)/(toroidal NI) times geometric factors.
+  - If iota hits 0.15 at ~50 kA → current cap is the bottleneck.
+  - If iota saturates at ~0.05 even at 128 kA → shape family is the bottleneck.
+- **(iii) Coil capability probe** — cold, no warm start. TF + banana at `current_init`, test surface = simple circular torus at R=0.925 with `a` from volume target. Miniature "maximize iota on this test surface" over banana DOFs (shape + current up to 20 kA) via BoozerLS + `Iotas()`. No SquaredFlux. Answers "what's the max helical shear this hardware can deliver" independent of stage 1 assumptions.
+
+**Branch A (stage-2-side fix, coils are capable, objective is weak):** The structural problem with stage 2 is that SquaredFlux on a prescribed surface doesn't see iota. Fixes in ascending complexity:
+- **A1. Lift iota constraint into stage 2.** Add `Iotas(bsurf)` on a *free* BoozerSurface inside stage 2's objective. Robust but duplicates singlestage's complexity; erases stage 2's "simple warm-start" role.
+- **A2 (preferred). Fixed-surface iota penalty.** Each inner eval, solve a 2-scalar problem for `(iota, G)` on the fixed VMEC surface (minimize `boozer_surface_residual` over iota, G only — surface frozen). Add `(iota − 0.15)²` as a penalty. Keeps stage 2 coil-only in DOFs while making the objective aware of true coil iota. Needs a SIMSOPT source check: does `BoozerSurface` expose a "freeze surface, optimize (iota, G) only" entry point, or do I need to wrap `boozer_surface_residual` in a mini-scipy solve?
+- **A3. Shape DOF expansion.** `order=2` may be restrictive. `order=4` is documented as producing bad shapes; `order=3` is untested. Cheap parameter sweep, worth trying alongside A2.
+- **A4. Penalized current mode + iota anchor.** Run stage 2 in `penalized` mode (soft cap ~20 kA) *with* A2's iota penalty. The iota constraint prevents the known 0→0 kA collapse (see run 51246996 in config.yaml); it pins the objective to needing helical current so the collapse mode is no longer a descent direction.
+
+Branch A stack: **A2 + A3 + A4**, all reuse existing stage 2 infrastructure.
+
+**Branch B (pipeline-wide cold-start fix, hardware ceiling forces redesign):** If diagnostic (ii) or (iii) says iota=0.15 is not achievable, the device design targets must change and the pipeline must be rebuilt from new targets.
+1. **Coil capability probe (diag iii)** → achievable `iota_max` for the fixed banana/TF hardware at realistic plasma volume.
+2. **Cold-start stage 1** with derived inputs (helper: `utils/cold_start_vmec_inputs.py`):
+   - From (TF current, nfp, V, R₀, `iota_target = iota_max`): derive `a` from $V = 2π²R_0a²$, `rbtor = μ_0 N_{tf} I_{tf}/(2π)`, `phiedge ≈ π·rbtor·a²/R_0` (verified in the two-pass rbtor-match in `utils/vmec_resize.py`).
+   - Boundary shape: hardcoded rotating-ellipse with amplitude `~(nonax_rc_ratio) × a`. Non-zero helical content required to seed iota — a circular torus has iota=0 under zero-β VMEC and the optimizer can't climb out.
+   - `ai = [iota_max]` (poly deg 0), `ncurr=0`, `lasym=False`, `pres_scale=0`, `raxis_cc = [R_0]`, `am=0`.
+3. **Stage 2 with Branch A's iota-aware objective** (from the new equilibrium).
+4. **Singlestage** with confidence that every stage knows the same iota number.
+
+Cold-start helper is valuable regardless of branch — unblocks Pareto scans and makes the pipeline self-contained. Difference is whether it's on the critical path.
+
+**Recommended sequencing:**
+1. Wait for Poincare 51287878 — primary diagnostic.
+2. Submit `local/diag_iota_basin.py` (via temporary `local/run_diag_iota_basin.sh`, a one-off sbatch script; NOT part of `submit.sh`). Runs the [A]/[B]/[C]/[D] scenarios from the post-fix state including the iota scan and surface fingerprint.
+3. Implement diagnostic (ii) as a small script that reuses `poincare_tracing.py`'s InterpolatedField with a banana-current scale parameter.
+4. Based on (i)+(ii) outcome:
+   - iota ≥ 0.08 at baseline or reachable at ≤ 20 kA → **Branch A**. Implement A2 first (iota-aware stage 2 objective). A3/A4 as follow-ups if A2 doesn't close the gap.
+   - iota < 0.05 saturation → run diag (iii). Use its `iota_max` to pick cold-start target. Implement cold-start stage 1 + rerun pipeline.
+5. Cold-start helper built in parallel either way.
+
+**Open design questions (before implementation):**
+1. **A2's iota solve** — does SIMSOPT expose "fixed surface, optimize only (iota, G)"? Source check on `BoozerSurface.run_code` / `boozer_surface_residual` needed before committing to A2.
+2. **Is the 16 kA cap a true hardware limit or a design guideline?** If conductor is rated ≥20 kA, Branch A4 opens up meaningfully. If it's a hard cap, Branch B is likely forced whenever diag (ii) shows the cap is the bottleneck.
+3. **Cold-start shape amplitude tuning** — too low → VMEC exits with iota=0 on near-axisym surface; too high → non-physical. Empirical tuning on the helper, probably ~0.1–0.2 of minor radius.
+
 **Stage 1 warm-start boundary rescaling (2026-04-09):** Stage 1 now rescales the seed wout LCFS to `plasma_surface.vmec_R` **before** VMEC optimization, so the optimized equilibrium is at the correct scale. Previously, `load_vmec_surface` (in `utils/init_boozersurface.py`) applied a post-hoc rescaling that distorted the stage-1-optimized shape. Downstream stages (stage 2, singlestage) now receive an already-scaled surface and do NOT rescale. Both `load_vmec_surface` and singlestage have a > 1% mismatch guard that applies legacy rescaling with a warning for backward compatibility with old wout files.
 
-**Stage 1 seed volume bug diagnosed — vmec_resize_driver.py preprocessing step added (2026-04-09):** The original seed `wout_nfp22ginsburg_000_014417_iota15.nc` was designed such that its **s=0.24** flux surface — not its LCFS — matched the physical plasma boundary at R0=0.925 m. The outer 76% of its volume was auxiliary. The jhalpern30/simsopt reference script (`STAGE_2/banana_coil_solver.py` lines 25-27, 304) makes this explicit: `SurfaceRZFourier.from_wout(..., s=0.24)` then `set_dofs(* R0/major_radius())`. Our prior stage 1 was loading the seed **LCFS** (`from_wout` without `s=`) and applying only the rescaling half — it was optimizing a downscaled version of the full seed volume instead of the inner core. Consequences:
+**Stage 1 seed volume bug diagnosed — utils/vmec_resize.py preprocessing step added (2026-04-09):** The original seed `wout_nfp22ginsburg_000_014417_iota15.nc` was designed such that its **s=0.24** flux surface — not its LCFS — matched the physical plasma boundary at R0=0.925 m. The outer 76% of its volume was auxiliary. The jhalpern30/simsopt reference script (`STAGE_2/banana_coil_solver.py` lines 25-27, 304) makes this explicit: `SurfaceRZFourier.from_wout(..., s=0.24)` then `set_dofs(* R0/major_radius())`. Our prior stage 1 was loading the seed **LCFS** (`from_wout` without `s=`) and applying only the rescaling half — it was optimizing a downscaled version of the full seed volume instead of the inner core. Consequences:
 - Stage 1 volume was `~0.45 m³` instead of `~0.097 m³` (5× too large).
 - Stage 1 aspect target was `6.45` (valid for seed LCFS) instead of `12.70` (new s=0.24 aspect).
 - `load_vmec_surface` then re-extracted `s=0.24` from stage 1's output wout, giving a surface that was `s=0.24` of a rescaled version of the full seed — compounding the error.
 - Stage 1 at `mpol=5` hit VMEC `niter` walls and spurious `ARNORM OR AZNORM EQUAL ZERO` axis degeneracies because the rescaled full-volume boundary was stiff.
 
-**Fix:** `vmec_resize_driver.py` reworked into a config-driven one-time preprocessing step. It loads `s=stage1_resize.inner_s` (0.24 by default) of the original seed, rescales by `vmec_R / major_radius()`, rescales `phiedge_new = phi_at_s * scale²` (phi linear in s; length² from coordinate rescale), remaps iota via a constrained polynomial fit with BC `iota(s_new=1) = iota_orig(s=0.24)` (`poly_deg=4`), scales the magnetic axis guess, and re-solves VMEC on a multi-grid ns ramp `[13, 25, 51]`. Output: `inputs/wout_stage1_seed.nc` (LCFS == target plasma boundary). Verified 2026-04-09: `R0=0.925 m`, `volume=0.0969 m³`, `aspect=12.70`, `iota_edge=0.120`, `iota_axis=0.148`.
+**Fix:** `utils/vmec_resize.py` reworked into a config-driven one-time preprocessing step. It loads `s=stage1_resize.inner_s` (0.24 by default) of the original seed, rescales by `vmec_R / major_radius()`, rescales `phiedge_new = phi_at_s * scale²` (phi linear in s; length² from coordinate rescale), remaps iota via a constrained polynomial fit with BC `iota(s_new=1) = iota_orig(s=0.24)` (`poly_deg=4`), scales the magnetic axis guess, and re-solves VMEC on a multi-grid ns ramp `[13, 25, 51]`. Output: `inputs/wout_stage1_seed.nc` (LCFS == target plasma boundary). Verified 2026-04-09: `R0=0.925 m`, `volume=0.0969 m³`, `aspect=12.70`, `iota_edge=0.120`, `iota_axis=0.148`.
 
 Downstream changes:
 - `config.yaml:warm_start.wout_filepath` → `inputs/wout_stage1_seed.nc`

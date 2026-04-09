@@ -17,7 +17,7 @@
 # against the output directory ($SCRATCH/banana_drivers_outputs/ or ./outputs/).
 warm_start:
   wout_filepath: "inputs/wout_stage1_seed.nc"                           # resized seed wout (LCFS = target boundary);
-                                                                         # produced by vmec_resize_driver.py from the
+                                                                         # produced by utils/vmec_resize.py from the
                                                                          # original wout_nfp22ginsburg_000_014417_iota15.nc
   init_bsurf_filepath: "inputs/stage1_boozersurface_opt.json"           # from 01_stage1
   stage1_wout_filename: "wout_stage1.nc"                                # from 01_stage1 (resolved against output dir)
@@ -91,7 +91,7 @@ plasma_surface:
   vmec_s: 1.0     # Flux surface label in the stage 1 wout (1.0 = LCFS = target boundary)
   vmec_R: 0.925   # Target major radius (m)
 
-# ── Stage 1 seed wout preprocessing (vmec_resize_driver.py) ─────────────────
+# ── Stage 1 seed wout preprocessing (utils/vmec_resize.py) ──────────────────
 # One-time preprocessing step: extract the inner_s surface of the original
 # seed wout, rescale to vmec_R, remap the iota profile, and re-solve VMEC to
 # produce a new wout whose LCFS (s=1) IS the target plasma boundary. The
@@ -176,7 +176,7 @@ thresholds:
 # Which stage-2 solver to use:
 #   'alm'      — augmented Lagrangian method (default; constraint list, no cliffs)
 #   'weighted' — legacy fixed-weight L-BFGS-B (single weighted scalar objective)
-stage2_mode: alm
+stage2_mode: weighted
 
 # ── Stage 2 objective weights (legacy 'weighted' mode) ──────────────────────
 stage2_weights:

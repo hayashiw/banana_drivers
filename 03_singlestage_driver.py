@@ -198,7 +198,7 @@ proc0_print(f'Loading BoozerSurface from {STAGE2_BSURF_FILE}')
 surface = SurfaceRZFourier.from_wout(
     WOUT_FILE, range="field period", nphi=NPHI, ntheta=NTHETA, s=VMEC_S,
 )
-# The stage 1 seed (produced by vmec_resize_driver.py) has LCFS == target
+# The stage 1 seed (produced by utils/vmec_resize.py) has LCFS == target
 # plasma boundary, and stage 1 preserves this. No rescaling is needed.
 gamma = surface.gamma().copy()
 quadpoints_theta = surface.quadpoints_theta.copy()

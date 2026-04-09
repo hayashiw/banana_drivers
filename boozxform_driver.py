@@ -67,7 +67,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 # PARAMETERS
 # ---------------------------------------------------------------------------
 # Flux surface to extract.
-# For the resized wout (from vmec_resize_driver.py) the LCFS is already the
+# For the resized wout (from utils/vmec_resize.py) the LCFS is already the
 # target plasma surface, so load at s=1.0 — no rescaling needed.
 # For the original over-sized wout, use s=0.24.
 VMEC_S = 1.0
