@@ -166,14 +166,31 @@ stage2_optimizer:
 # Lagrange multipliers λᵢ as constraints become satisfied. Inner loop is
 # L-BFGS-B on a smooth augmented Lagrangian — no penalty cliffs.
 #
-# SquaredFlux is wrapped in QuadraticPenalty(Jsqf, sqf_target, "max") so it
-# contributes c=0, ∇c=0 once Jsqf drops below sqf_target. This prevents
-# SquaredFlux (the only non-self-clipping term) from dominating the descent
-# indefinitely and lets the geometric constraints take over once field match
-# is "good enough". Target is in the "normalized" SquaredFlux definition
-# (dimensionless, J = ∫(B·n−B_T)² ds / ∫|B|² ds) — see fluxobjective.py.
+# SquaredFlux uses its native `threshold` parameter (ported from PedroGil's
+# simsopt_alm_temp — see fluxobjective.py): J() returns 0.0 and dJ() returns
+# zero B_vjp once sq_flux < sqf_threshold. This gives a clean "constraint
+# inactive" state for ALM (c=0, ∇c=0) without a QuadraticPenalty wrap.
 stage2_alm:
-  mu_init: 10.0        # initial penalty parameter (> 1; scalar applies to all)
+  # Preset selector (override via BANANA_ALM_PRESET env var):
+  #   'throttled'   — (default) inner loop is step-limited via dof_scale and
+  #                   maxfun cap, gentle penalty growth (tau=2), many outer
+  #                   iterations. Designed for stiff constraint landscapes
+  #                   (banana coils near hardware limits).
+  #   'unthrottled' — inner loop runs to full convergence (no dof_scale, no
+  #                   maxfun cap), aggressive penalty growth (tau=10), fewer
+  #                   outer iterations. Matches PedroGil's simsopt_alm_temp
+  #                   examples. Better when constraints are not near cliffs.
+  # Individual keys below override the preset defaults. Env var overrides
+  # (BANANA_TAU, BANANA_DOF_SCALE, etc.) override everything.
+  preset: throttled
+
+  mu_init: 1.0e+3      # initial penalty parameter (> 1; scalar applies to all).
+                       # Raised from 10 to shorten the outer ramp phase — run 51251125
+                       # needed μ_sqf to climb 12 orders of magnitude (10 → 5.5e12)
+                       # before the inner L-BFGS-B took its first real step, at which
+                       # point the step was a giant cliff-jump (curv 30 → 52 m⁻¹ in one
+                       # outer iter). Starting closer to the working μ gives the inner
+                       # loop more, smaller descent steps instead of two large ones.
   tau: 2               # penalty growth factor for violated constraints (2-10+, problem-dependent).
                        # Lowered from 4 to prevent μ_curv from monopolizing the search
                        # direction before current has room to climb (see 51236325 failure).
@@ -187,21 +204,28 @@ stage2_alm:
                        # iters 70+ produced only oscillation.
   grad_tol: 1.0e-12    # gradient norm convergence tolerance
   c_tol: 1.0e-8        # constraint norm (inf) convergence tolerance.
-                       # IMPORTANT: constraints are QuadraticPenalty-wrapped
-                       # (SquaredFlux via sqf_target, length/cc/curv are
-                       # self-clipping squared penalties) so c is in SQUARED
-                       # units. c_tol=1e-8 corresponds to a ~1e-4 linear
-                       # residual — meaningful against sqf_target=1e-3.
+                       # length/cc/curv are self-clipping squared penalties
+                       # (LpCurveLength etc.) so their contribution to c is in
+                       # SQUARED units. Jsqf uses its native threshold (no
+                       # wrap) and enters c in linear units. c_tol=1e-8
+                       # corresponds to a ~1e-4 residual on the squared terms.
                        # A linear-units value like 1e-3 makes the initial
                        # state trivially "satisfied" and ALM exits with no
                        # descent at iter 1 (see run 51248041).
-  dof_scale: 0.1       # DOF step limiter: physical step = L-BFGS-B step * dof_scale
-                       # (matches qi_drivers; required to prevent inner line-search stall)
-  sqf_target: 1.0e-3   # SquaredFlux "good enough" target (normalized definition):
-                       # once Jsqf < sqf_target, its constraint contribution is clipped to 0.
-                       # Loosened from 1e-4 — singlestage runs a full joint
-                       # coil+surface solve, so coarse field matching is fine
-                       # as long as the coil topology is right.
+  dof_scale: 0.1       # DOF coordinate rescaling: y = x / dof_scale. Smaller values
+                       # make each inner L-BFGS-B step smaller in physical space, but
+                       # do NOT bound total displacement per outer iter. Set to null
+                       # to disable (unthrottled preset default).
+  sqf_threshold: 1.0e-15  # SquaredFlux noise floor passed to SquaredFlux(threshold=...).
+                          # J()=0 and dJ() returns zero B_vjp once sq_flux < sqf_threshold.
+                          # This is a NOISE FLOOR, not a convergence target — matches
+                          # PedroGil's simsopt_alm_temp examples (9/10 use 1e-15 or 1e-16,
+                          # see examples/3_Advanced/auglag/*.py). Run 51252548 showed that
+                          # a loose value like 1e-3 causes catastrophic coil-coil collapse:
+                          # Jsqf clips to 0 early, removing the only objective that
+                          # prevents the banana coils from imploding into each other,
+                          # leaving ALM to satisfy length/cc/curv trivially with collapsed
+                          # coils (CC went 0.0956 → 0.00173 m in 5 iters).
 
 # ── Singlestage objective weights ───────────────────────────────────────────
 singlestage_weights:

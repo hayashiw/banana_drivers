@@ -112,7 +112,20 @@ def load_vmec_surface(wout_path, cfg):
         wout_path, range="field period",
         nphi=ps['nphi'], ntheta=ps['ntheta'], s=ps['vmec_s'],
     )
-    surface_vmec.set_dofs(surface_vmec.get_dofs() * ps['vmec_R'] / surface_vmec.major_radius())
+    # NOTE: Rescaling to vmec_R is now done in stage 1 (01_stage1_driver.py)
+    # BEFORE optimization, so the wout is already at the correct scale.
+    # Downstream stages (stage 2, singlestage) receive an already-scaled
+    # surface via the BoozerSurface JSON chain. Only apply rescaling here
+    # for legacy/standalone use where the wout may not be pre-scaled.
+    _surf_R0 = surface_vmec.major_radius()
+    if abs(_surf_R0 - ps['vmec_R']) / ps['vmec_R'] > 0.01:  # > 1% mismatch
+        import warnings
+        warnings.warn(
+            f"load_vmec_surface: wout R0={_surf_R0:.4f} differs from "
+            f"vmec_R={ps['vmec_R']} by > 1%. Applying legacy rescaling. "
+            f"Consider re-running stage 1 to produce a pre-scaled wout."
+        )
+        surface_vmec.set_dofs(surface_vmec.get_dofs() * ps['vmec_R'] / _surf_R0)
     gamma = surface_vmec.gamma().copy()
 
     surface_xyz = SurfaceXYZTensorFourier(

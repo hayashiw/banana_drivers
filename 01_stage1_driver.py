@@ -58,6 +58,7 @@ with open(_cfg_path) as _f:
 # Device geometry
 NFP      = cfg['device']['nfp']
 STELLSYM = cfg['device']['stellsym']
+PLASMA_R = cfg['plasma_surface']['vmec_R']  # target plasma major radius (m)
 
 # Stage 1 settings
 s1 = cfg['stage1']
@@ -203,9 +204,22 @@ else:
     from simsopt.geo import SurfaceRZFourier
     wout_surf = SurfaceRZFourier.from_wout(WOUT_FILE, range='full torus',
                                            nphi=50, ntheta=50)
+
+    # Rescale boundary to target plasma radius so VMEC optimizes at the
+    # correct scale. Without this, stage 1 optimizes at the seed's native R0
+    # and load_vmec_surface must post-hoc rescale, distorting the result.
+    _seed_R0 = wout_surf.major_radius()
+    _scale = PLASMA_R / _seed_R0
+    wout_surf.set_dofs(wout_surf.get_dofs() * _scale)
+    # Rescale phiedge consistently: Φ ∝ B₀ R₀² scales as R₀² for fixed B₀
+    vmec.indata.phiedge *= _scale**2
+    vmec.local_full_x = np.asarray(vmec.get_dofs())  # re-sync DOF cache
+    proc0_print(f'  Rescaled boundary: R0 {_seed_R0:.4f} → {PLASMA_R:.4f} m '
+                f'(scale={_scale:.6f}), phiedge {wout_phiedge:.6f} → {vmec.indata.phiedge:.6f}')
+
     vmec.boundary = wout_surf
     proc0_print(f'  nfp={wout_nfp}, mpol={vmec.indata.mpol}, ntor={vmec.indata.ntor}, '
-                f'phiedge={wout_phiedge:.6f}')
+                f'phiedge={vmec.indata.phiedge:.6f}')
 
 vmec.verbose = mpi.proc0_world
 surf = vmec.boundary
@@ -221,18 +235,28 @@ boozer.bx.verbose = mpi.proc0_world
 # QA objective on multiple flux surfaces
 qs_list = [Quasisymmetry(boozer, s, 1, 0) for s in QS_SURFACES]
 
-# Least-squares problem: aspect, iota (axis + edge), QA on each surface
-tuples = [
-    (vmec.aspect, ASPECT_TARGET, ASPECT_WEIGHT),
-    (vmec.iota_axis, IOTA_TARGET, IOTA_WEIGHT),
-    (vmec.iota_edge, IOTA_TARGET, IOTA_WEIGHT),
-    (vmec.volume, VOLUME_TARGET, VOLUME_WEIGHT),
-]
-for qs in qs_list:
-    tuples.append((qs.J, 0, QS_WEIGHT))
 
-prob = LeastSquaresProblem.from_tuples(tuples)
-proc0_print(f'  {len(tuples)} objective terms (aspect + 2 iota + volume + {len(qs_list)} QS surfaces)')
+def _build_prob():
+    """Build LeastSquaresProblem from current objectives.
+
+    Must be called after updating boozer.mpol/ntor — Quasisymmetry.J() returns
+    one residual per Boozer mode, so the residual vector length changes with
+    boozer resolution.  LeastSquaresProblem caches nvals on first eval and
+    cannot handle a size change, so we rebuild it at each resolution step.
+    """
+    tuples = [
+        (vmec.aspect, ASPECT_TARGET, ASPECT_WEIGHT),
+        (vmec.iota_axis, IOTA_TARGET, IOTA_WEIGHT),
+        (vmec.iota_edge, IOTA_TARGET, IOTA_WEIGHT),
+        (vmec.volume, VOLUME_TARGET, VOLUME_WEIGHT),
+    ]
+    for qs in qs_list:
+        tuples.append((qs.J, 0, QS_WEIGHT))
+    return LeastSquaresProblem.from_tuples(tuples)
+
+
+prob = _build_prob()
+proc0_print(f'  {4 + len(qs_list)} objective terms (aspect + 2 iota + volume + {len(qs_list)} QS surfaces)')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -313,6 +337,10 @@ for step in range(n_steps):
     # Update booz_xform resolution
     boozer.mpol = b_mpol
     boozer.ntor = b_ntor
+
+    # Rebuild LeastSquaresProblem — Quasisymmetry.J() residual length changes
+    # with boozer mpol/ntor (one residual per symmetry-breaking Boozer mode).
+    prob = _build_prob()
 
     # Free boundary modes up to max_mode
     surf.fix_all()

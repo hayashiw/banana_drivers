@@ -103,19 +103,44 @@ STAGE2_MODE = os.environ.get('BANANA_STAGE2_MODE', cfg.get('stage2_mode', 'alm')
 if STAGE2_MODE not in ('alm', 'weighted'):
     raise ValueError(f"stage2_mode must be 'alm' or 'weighted', got {STAGE2_MODE!r}")
 
+# ALM preset defaults — individual config keys and env vars override on top.
+_ALM_PRESETS = {
+    'throttled': dict(
+        mu_init=1.0e+3, tau=2, maxiter=1000, maxfun=100,
+        maxiter_lag=80, grad_tol=1.0e-12, c_tol=1.0e-8, dof_scale=0.1,
+    ),
+    'unthrottled': dict(
+        mu_init=1.0e+3, tau=10, maxiter=1000, maxfun=None,
+        maxiter_lag=50, grad_tol=1.0e-8, c_tol=1.0e-8, dof_scale=None,
+    ),
+}
+ALM_PRESET = os.environ.get('BANANA_ALM_PRESET',
+                            cfg['stage2_alm'].get('preset', 'throttled')).lower()
+if ALM_PRESET not in _ALM_PRESETS:
+    raise ValueError(f"stage2_alm.preset must be one of {list(_ALM_PRESETS)}, got {ALM_PRESET!r}")
+_preset = _ALM_PRESETS[ALM_PRESET]
+
+def _alm_param(key, env_var=None, typ=float):
+    """Resolve ALM param: env var > config.yaml > preset default."""
+    if env_var and os.environ.get(env_var) is not None:
+        val = os.environ[env_var]
+        return None if val.lower() == 'none' else typ(val)
+    if key in cfg['stage2_alm'] and key != 'preset':
+        val = cfg['stage2_alm'][key]
+        return None if val is None else typ(val)
+    return _preset[key]
+
 # ALM optimizer params
-ALM_MU_INIT      = float(cfg['stage2_alm']['mu_init'])
-ALM_TAU          = float(os.environ.get('BANANA_TAU', cfg['stage2_alm']['tau']))
-ALM_MAXITER      = int(cfg['stage2_alm']['maxiter'])
-ALM_MAXFUN       = int(cfg['stage2_alm']['maxfun'])
-ALM_MAXITER_LAG  = int(os.environ.get('BANANA_MAXITER_LAG', cfg['stage2_alm']['maxiter_lag']))
-ALM_GRAD_TOL     = float(cfg['stage2_alm']['grad_tol'])
-ALM_C_TOL        = float(cfg['stage2_alm']['c_tol'])
-ALM_DOF_SCALE    = float(os.environ.get(
-    'BANANA_DOF_SCALE',
-    cfg['stage2_alm'].get('dof_scale', 1.0)
-))
-ALM_SQF_TARGET   = float(cfg['stage2_alm']['sqf_target'])
+ALM_MU_INIT      = _alm_param('mu_init')
+ALM_TAU          = _alm_param('tau', 'BANANA_TAU')
+ALM_MAXITER      = _alm_param('maxiter', typ=int)
+ALM_MAXFUN       = _alm_param('maxfun', typ=lambda v: None if v is None else int(v))
+ALM_MAXITER_LAG  = _alm_param('maxiter_lag', 'BANANA_MAXITER_LAG', typ=int)
+ALM_GRAD_TOL     = _alm_param('grad_tol')
+ALM_C_TOL        = _alm_param('c_tol')
+ALM_DOF_SCALE    = _alm_param('dof_scale', 'BANANA_DOF_SCALE',
+                              typ=lambda v: None if v is None else float(v))
+ALM_SQF_THRESHOLD = float(cfg['stage2_alm']['sqf_threshold'])
 
 # Legacy weighted-mode params
 SQF_WEIGHT  = float(cfg['stage2_weights']['squared_flux'])
@@ -173,16 +198,16 @@ INPUT PARAMETERS ─────────────────────
         curv_max    = {CURV_THRESHOLD} m^-1
 """
 if STAGE2_MODE == 'alm':
-    _body = f"""    ALM optimizer:
+    _body = f"""    ALM optimizer (preset: {ALM_PRESET}):
         mu_init     = {ALM_MU_INIT:.3e}
         tau         = {ALM_TAU}
         maxiter_lag = {ALM_MAXITER_LAG}
         maxiter     = {ALM_MAXITER}
-        maxfun      = {ALM_MAXFUN}
+        maxfun      = {ALM_MAXFUN if ALM_MAXFUN is not None else 'None (unlimited)'}
         grad_tol    = {ALM_GRAD_TOL:.3e}
         c_tol       = {ALM_C_TOL:.3e}
-        dof_scale   = {ALM_DOF_SCALE}
-        sqf_target  = {ALM_SQF_TARGET:.3e}  (normalized SquaredFlux)
+        dof_scale   = {ALM_DOF_SCALE if ALM_DOF_SCALE is not None else 'None (no rescaling)'}
+        sqf_threshold = {ALM_SQF_THRESHOLD:.3e}  (SquaredFlux noise floor)
 """
 else:
     _body = f"""    Objective weights:
@@ -249,7 +274,15 @@ Bdotn_surf = np.sum(Bbs * surface.unitnormal(), axis=-1)
 # ──────────────────────────────────────────────────────────────────────────────
 # Define objective function
 # ──────────────────────────────────────────────────────────────────────────────
-Jsqf  = SquaredFlux(surface, biotsavart, definition="normalized")
+# SquaredFlux carries its own `threshold` parameter (our SIMSOPT fork, ported
+# from PedroGil's simsopt_alm_temp). When `sq_flux < threshold`, both J() and
+# dJ() are identically zero — the constraint is cleanly inactive without a
+# QuadraticPenalty wrap. In weighted mode threshold=0 (standard behavior);
+# in ALM mode threshold=ALM_SQF_THRESHOLD is a noise floor (not a convergence
+# target — keep it near machine eps, ~1e-15, matching PedroGil's examples).
+_sqf_threshold = ALM_SQF_THRESHOLD if STAGE2_MODE == 'alm' else 0.0
+Jsqf  = SquaredFlux(surface, biotsavart, definition="normalized",
+                    threshold=_sqf_threshold)
 _Jl   = CurveLength(banana_curve)
 Jl    = QuadraticPenalty(_Jl, LENGTH_THRESHOLD, "max")
 Jcc   = CurveCurveDistance(curves, CC_THRESHOLD)
@@ -264,22 +297,19 @@ else:
     Jcurr = None
 
 # Weighted mode builds a single scalar objective for L-BFGS-B. ALM mode uses
-# f=None and places every penalty in the constraint list. SquaredFlux is
-# wrapped in QuadraticPenalty so it clips to 0 once the target is hit —
-# without this wrapper, Jsqf is always "active" and dominates the descent
-# indefinitely, preventing Lagrange multipliers on geometric constraints from
-# ever converging (see PLAN.md for the 51228710 failure mode).
+# f=None and places Jsqf (with its native threshold dead zone) directly in
+# the constraint list alongside the self-clipping geometric penalties —
+# matches PedroGil's simsopt_alm_temp example pattern (auglag_qa.py).
 if STAGE2_MODE == 'weighted':
     JF = (SQF_WEIGHT * Jsqf) + (LEN_WEIGHT * Jl) + (CC_WEIGHT * Jcc) + (CURV_WEIGHT * Jcurv)
     constraints = None
     constraint_names = None
 else:
-    Jsqf_alm = QuadraticPenalty(Jsqf, ALM_SQF_TARGET, "max")
     # ALM: build a top-level SumOptimizable so we have a well-defined DOF
     # layout to read ``x`` from. Only used for DOF access; its J()/dJ() are
     # not the objective (f=None).
-    JF = (1 * Jsqf_alm) + (1 * Jl) + (1 * Jcc) + (1 * Jcurv)
-    constraints      = [Jsqf_alm, Jl, Jcc, Jcurv]
+    JF = (1 * Jsqf) + (1 * Jl) + (1 * Jcc) + (1 * Jcurv)
+    constraints      = [Jsqf, Jl, Jcc, Jcurv]
     constraint_names = ['squared_flux', 'length', 'coil_coil', 'curvature']
     if Jcurr is not None:
         JF = JF + (1 * Jcurr)
@@ -450,9 +480,9 @@ with open(DIAGNOSTICS_FILE, 'w') as f:
     f.write(f'# TF: {len(tf_coils)} coils, Banana: {banana_current.get_value()/1e3:.0f} kA (init)\n')
     f.write(f'# LENGTH_THRESHOLD={LENGTH_THRESHOLD}, CC_THRESHOLD={CC_THRESHOLD}, CURV_THRESHOLD={CURV_THRESHOLD}\n')
     if STAGE2_MODE == 'alm':
-        f.write(f'# ALM: maxiter_lag={ALM_MAXITER_LAG}, maxiter={ALM_MAXITER}, '
+        f.write(f'# ALM preset={ALM_PRESET}: maxiter_lag={ALM_MAXITER_LAG}, maxiter={ALM_MAXITER}, '
                 f'maxfun={ALM_MAXFUN}, tau={ALM_TAU}, mu_init={ALM_MU_INIT}\n')
-        f.write(f'# grad_tol={ALM_GRAD_TOL:.3e}, c_tol={ALM_C_TOL:.3e}, dof_scale={ALM_DOF_SCALE}\n')
+        f.write(f'# grad_tol={ALM_GRAD_TOL}, c_tol={ALM_C_TOL}, dof_scale={ALM_DOF_SCALE}\n')
     else:
         f.write(f'# MAXITER={MAXITER}, FTOL={FTOL:.3e}, GTOL={GTOL:.3e}\n')
     f.write(
@@ -561,6 +591,7 @@ Total runtime: {timedelta(seconds=opt_runtime)}
     # Save ALM summary JSON.
     summary = {
         'mode': 'alm',
+        'preset': ALM_PRESET,
         'date': str(end_date),
         'runtime_sec': opt_runtime,
         'outer_iter': int(track['iter']) + 1,

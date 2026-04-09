@@ -70,10 +70,11 @@ Drivers read select parameters from environment variables to support Pareto scan
 - `BANANA_IOTA` — stage 1 iota target override (Pareto axis)
 - `BANANA_VOLUME` — stage 1 volume target override (Pareto axis)
 - `BANANA_STAGE2_MODE` — `alm` (default) or `weighted` — select stage 2 solver
+- `BANANA_ALM_PRESET` — `throttled` (default) or `unthrottled` — ALM inner-loop philosophy (see "Stage 2 ALM presets" below)
 - `BANANA_CURRENT_MODE_S2` — `fixed` (default), `penalized`, or `free` — how stage 2 treats the banana current DOF (see "Stage 2 current handling" below)
 - `BANANA_TAU` — stage 2 ALM penalty growth factor override
 - `BANANA_MAXITER_LAG` — stage 2 ALM outer-loop iteration cap override
-- `BANANA_DOF_SCALE` — stage 2 ALM inner-loop step limiter (default 0.1). Lower (e.g. 0.05, 0.03) to prevent large steps from overshooting the `LpCurveCurvature` cliff at $\kappa_\text{max}$
+- `BANANA_DOF_SCALE` — stage 2 ALM DOF coordinate rescaling (default 0.1 in throttled, None in unthrottled). Rescales DOF space: $y = x / \text{dof\_scale}$. Smaller values make each inner L-BFGS-B step smaller in physical space, but do NOT bound total displacement per outer iteration. Set to `none` to disable.
 - `BANANA_CURV_MAX_S2` — stage 2 curvature threshold override (default 40 m⁻¹). Stage-2-only softening of the 20 m⁻¹ hardware limit enforced by singlestage; use only to give stage 2 more headroom near the curvature cliff
 
 ### Surface Quadpoints Range
@@ -97,13 +98,23 @@ Three modes selectable via `current_mode_stage2` in config.yaml or `BANANA_CURRE
 
 `CurrentPenaltyWrapper` (in `utils/current_penalty.py`) is the adapter that makes `ScaledCurrent` compatible with `QuadraticPenalty`; shared between stage 2 (penalized mode) and singlestage. The gradient uses `sign(I) * scaled_current.vjp([1.0])` — the `vjp` carries the `ScaledCurrent` scale factor via SIMSOPT's chain rule, so a naive `sign(I)` alone would underweight the gradient by ~10^4.
 
+### Stage 1 boundary rescaling
+Stage 1 rescales the warm-start seed boundary to the target plasma radius (`plasma_surface.vmec_R`) **before** VMEC optimization, so the optimized equilibrium is at the correct scale. Downstream stages (stage 2, singlestage) receive an already-scaled surface via the BoozerSurface JSON chain and do NOT rescale. `load_vmec_surface` in `utils/init_boozersurface.py` and singlestage both have a > 1% mismatch guard that applies legacy rescaling with a warning if the wout is not pre-scaled (e.g., from an old stage 1 run).
+
 ### Stage 2 solver: ALM by default
 Stage 2 uses the augmented Lagrangian method (`stage2_mode: alm` in config.yaml). Rationale:
 - `f=None` with all four terms (SquaredFlux, length, coil-coil, curvature) placed in the constraint list — no fixed weights, no penalty cliffs.
-- `SquaredFlux` is wrapped in `QuadraticPenalty(Jsqf, sqf_target, "max")` so its contribution clips to zero once `Jsqf < sqf_target`. Without this wrapper SquaredFlux is the only non-self-clipping term and dominates the descent indefinitely (see PLAN.md for the 51228710 failure mode that motivated the wrapper).
-- `dof_scale` (default 0.1) limits the physical step per inner L-BFGS-B iteration; matches the qi_drivers pattern and prevents inner line-search stall.
-- Per-constraint `μᵢ` ramps by `tau` per outer iteration. Lower `tau` is safer for stiff constraint problems (curvature in particular) — see the μ-explosion discussion in PLAN.md.
+- `SquaredFlux` uses its native `threshold` parameter (ported from PedroGil's simsopt_alm_temp): `J()=0` and `dJ()` returns zero `B_vjp` once `sq_flux < sqf_threshold`. The threshold is a noise floor (~1e-15), not a convergence target. See `fluxobjective.py`.
+- `dof_scale` is a DOF coordinate rescaling ($y = x / \text{dof\_scale}$), NOT a step bound. It makes each inner L-BFGS-B iteration smaller in physical space but does NOT cap total displacement per outer iteration. Total displacement depends on `maxfun` (number of inner function evaluations).
+- Per-constraint $\mu_i$ ramps by `tau` per outer iteration. Lower `tau` is safer for stiff constraint problems (curvature in particular) — see the $\mu$-explosion discussion in PLAN.md.
 - Legacy `weighted` mode (single scalar objective with fixed weights) is still available via `BANANA_STAGE2_MODE=weighted` for comparison runs.
+
+### Stage 2 ALM presets
+Two presets control the inner-loop philosophy (`stage2_alm.preset` in config.yaml, `BANANA_ALM_PRESET` env var):
+- **`throttled` (default)** — inner loop is step-limited via `dof_scale` (0.1) and `maxfun` cap (100), gentle penalty growth (`tau=2`), many outer iterations (`maxiter_lag=80`). Designed for stiff constraint landscapes where banana coils are near hardware limits. The inner L-BFGS-B under-converges at each penalty level; the outer loop compensates via $\mu/\lambda$ updates.
+- **`unthrottled`** — inner loop runs to full convergence (no `dof_scale`, no `maxfun` cap), aggressive penalty growth (`tau=10`), fewer outer iterations (`maxiter_lag=50`). Matches PedroGil's simsopt_alm_temp examples. Better when constraints are not near cliffs. This is how SIMSOPT's ALM was designed to be used.
+
+Individual config keys and env vars override preset defaults. Resolution order: env var > config.yaml key > preset default.
 
 ### Singlestage solver: BoozerLS L-BFGS-B
 - Uses BoozerLS (`constraint_weight > 0 → boozer_type='ls'`) with `constraint_weight=1.0` from `config.yaml`.

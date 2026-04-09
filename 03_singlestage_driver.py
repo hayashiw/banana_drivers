@@ -199,7 +199,18 @@ proc0_print(f'Loading BoozerSurface from {STAGE2_BSURF_FILE}')
 surface = SurfaceRZFourier.from_wout(
     WOUT_FILE, range="field period", nphi=NPHI, ntheta=NTHETA, s=VMEC_S,
 )
-surface.set_dofs(surface.get_dofs() * VMEC_R / surface.major_radius())
+# Rescaling to VMEC_R is now done in stage 1 before optimization, so the
+# stage 1 wout should already be at the correct scale. Only apply legacy
+# rescaling if there is a significant mismatch (> 1%).
+_surf_R0 = surface.major_radius()
+if abs(_surf_R0 - VMEC_R) / VMEC_R > 0.01:
+    import warnings
+    warnings.warn(
+        f"singlestage: wout R0={_surf_R0:.4f} differs from "
+        f"vmec_R={VMEC_R} by > 1%. Applying legacy rescaling. "
+        f"Consider re-running stage 1 to produce a pre-scaled wout."
+    )
+    surface.set_dofs(surface.get_dofs() * VMEC_R / _surf_R0)
 gamma = surface.gamma().copy()
 quadpoints_theta = surface.quadpoints_theta.copy()
 quadpoints_phi = surface.quadpoints_phi.copy()
