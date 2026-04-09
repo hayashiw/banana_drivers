@@ -1,70 +1,103 @@
 """vmec_resize_driver.py
 
-Re-solve VMEC with a smaller boundary so the new LCFS matches the plasma target
-surface used in stage2 / singlestage optimization.
+One-time preprocessing step: produce the stage 1 seed wout by extracting an
+inner flux surface of the original wout, rescaling it to the target major
+radius, and re-solving VMEC with a remapped iota profile. The output wout has
+LCFS (s=1) == target plasma boundary, so downstream drivers (stage 1, stage 2,
+singlestage) no longer need any boundary rescaling.
 
 PROBLEM BEING SOLVED
 --------------------
-stage2_driver.py and singlestage_driver.py currently load the VMEC wout at s=0.24
-because the VMEC LCFS (s=1) is physically too large and intersects the vacuum vessel.
-A manual rescaling (set_dofs * VMEC_R0 / major_radius()) is then applied to force the
-major radius to the correct physical value.  This is ad-hoc and means the iota and
-geometry at s=1 of the wout do NOT correspond to the target plasma.
+The original seed wout (`inputs/wout_nfp22ginsburg_000_014417_iota15.nc`) is
+sized such that its s=0.24 flux surface — not its LCFS — corresponds to the
+physical plasma boundary at R0=0.925 m. Running stage 1 directly against the
+seed LCFS (s=1) optimizes the wrong equilibrium: a larger toroidal volume with
+all the seed's outer harmonics, producing a post-stage-1 wout whose inner
+structure doesn't match the design target.
+
+The reference banana coil example (`jhalpern30/simsopt` STAGE_2/banana_coil_
+solver.py lines 25-27, 304) extracts s=0.24 of the seed and rescales the
+coordinates to R0=0.925 m before using the surface for coil optimization. It
+does this for the plasma surface only — it never re-solves VMEC. We do the
+VMEC re-solve here so that stage 1 can warm-start from a self-consistent
+equilibrium whose LCFS is already the target plasma boundary.
 
 APPROACH
 --------
-Fixed-boundary VMEC takes the LCFS shape as a prescribed input — it can be any size.
-We extract the s=0.24 surface from the existing wout (and scale it to physical units),
-set that as the new VMEC boundary, and re-solve.  The new equilibrium has:
-  - LCFS = target plasma surface   (load at s=1 going forward)
-  - same iota profile as the original (polynomial fit to wout iotaf)
-  - same magnetic axis position (scaled from original)
-  - smaller enclosed toroidal flux (scaled from original)
+1. Load s=inner_s surface from the seed wout (SurfaceRZFourier.from_wout)
+2. Rescale boundary DOFs by scale = vmec_R / major_radius()
+3. Rescale enclosed toroidal flux: phiedge_new = phi(s=inner_s) * scale^2
+   (phi is linear in s; coordinate rescaling adds the scale^2 factor since
+    B*area ~ length^2 at fixed B scale)
+4. Remap iota profile: s_new = s_orig / inner_s, fit a constrained polynomial
+   with hard BC iota(s_new=1) = iota_orig(s=inner_s)
+5. Scale magnetic axis initial guess by the same factor
+6. Re-solve VMEC at a multi-grid ns ramp [13, 25, 51]
+7. Save as inputs/wout_stage1_seed.nc (path from config.yaml)
 
-VERIFICATION
-------------
-After the run we compare:
-  - New LCFS R0, minor radius vs. original s=0.24 surface (should match)
-  - New LCFS iota vs. original iota at s=0.24
-  - Surface shape (cross-section) side-by-side
+CONFIG KEYS (stage1_resize block)
+---------------------------------
+  seed_wout_filepath : original wout (input)
+  output_filepath    : resized wout (output; will overwrite)
+  inner_s            : flux surface label in the seed to use as the new LCFS
+  poly_deg           : iota polynomial degree
+  mpol, ntor         : VMEC resolution for the re-solve
+  ns_array, niter_array, ftol_array : multi-grid convergence sequence
+
+Run once before stage 1:
+  python vmec_resize_driver.py
 """
 
 import os
+import shutil
 import numpy as np
 import netCDF4
+import yaml
 
 from simsopt.geo import SurfaceRZFourier
 from simsopt.mhd import Vmec
 
 # ---------------------------------------------------------------------------
-# PATHS
+# Load configuration
 # ---------------------------------------------------------------------------
-WOUT_FILE    = os.path.abspath('inputs/wout_nfp22ginsburg_000_014417_iota15.nc')
+_base_dir = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(_base_dir, 'config.yaml')) as f:
+    cfg = yaml.safe_load(f)
+
+rs = cfg['stage1_resize']
+ps = cfg['plasma_surface']
+
+WOUT_FILE     = os.path.join(_base_dir, rs['seed_wout_filepath'])
+OUT_WOUT_FILE = os.path.join(_base_dir, rs['output_filepath'])
+VMEC_S        = float(rs['inner_s'])
+VMEC_R0       = float(ps['vmec_R'])
+POLY_DEG      = int(rs['poly_deg'])
+MPOL          = int(rs['mpol'])
+NTOR          = int(rs['ntor'])
+NS_ARRAY      = list(rs['ns_array'])
+NITER_ARRAY   = list(rs['niter_array'])
+FTOL_ARRAY    = list(rs['ftol_array'])
+
 TEMPLATE_INPUT = os.path.abspath(
-    '../simsopt/src/simsopt/mhd/input.default'
+    os.path.join(_base_dir, '..', 'simsopt', 'src', 'simsopt', 'mhd', 'input.default')
 )
-OUT_DIR      = os.path.abspath('outputs_vmec_resize')
+OUT_DIR = os.path.abspath(os.path.join(_base_dir, 'outputs_vmec_resize'))
 os.makedirs(OUT_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(OUT_WOUT_FILE), exist_ok=True)
 
-# ---------------------------------------------------------------------------
-# PARAMETERS
-# ---------------------------------------------------------------------------
-# Flux surface from the original wout to use as the new LCFS.
-# This is the same surface currently used in stage2/singlestage.
-VMEC_S    = 0.24
-
-# Physical major radius to scale to (matches the coil winding surface R0).
-VMEC_R0   = 0.925   # meters
-
-# VMEC resolution for the new run.  Match the original wout resolution.
-MPOL      = 5
-NTOR      = 5
-
-# Grid resolution for the multi-grid convergence sequence.
-# Finer grids (larger NS) improve accuracy but cost more.
-NS_ARRAY    = [13, 25, 51]
-NITER_ARRAY = [1000, 2000, 5000]
-FTOL_ARRAY  = [1e-10, 1e-12, 1e-14]
+print("="*72)
+print("VMEC resize: produce stage 1 seed wout")
+print("="*72)
+print(f"  Input seed:     {WOUT_FILE}")
+print(f"  Output path:    {OUT_WOUT_FILE}")
+print(f"  Extract s =     {VMEC_S}")
+print(f"  Target R0 =     {VMEC_R0} m")
+print(f"  VMEC (mpol, ntor) = ({MPOL}, {NTOR})")
+print(f"  ns_array =      {NS_ARRAY}")
+print(f"  niter_array =   {NITER_ARRAY}")
+print(f"  ftol_array =    {FTOL_ARRAY}")
+print(f"  Iota poly deg = {POLY_DEG}")
+print()
 
 # ---------------------------------------------------------------------------
 # STEP 1 — Load the target surface from the original wout
@@ -72,7 +105,7 @@ FTOL_ARRAY  = [1e-10, 1e-12, 1e-14]
 # from_wout extracts the s=VMEC_S flux surface in VMEC straight-field-line
 # coordinates. range='full torus' covers the full 0→2π in phi, which is what
 # VMEC requires for the LCFS boundary.
-print(f"Loading s={VMEC_S} surface from {WOUT_FILE} ...")
+print(f"Loading s={VMEC_S} surface from seed wout ...")
 surf_target = SurfaceRZFourier.from_wout(
     WOUT_FILE,
     s=VMEC_S,
@@ -81,135 +114,110 @@ surf_target = SurfaceRZFourier.from_wout(
     ntheta=64,
 )
 
-# The wout stores coordinates in units where the original LCFS has R0≈1.056 m.
-# We rescale so the new LCFS has R0=VMEC_R0 (matching the coil geometry).
-scale = VMEC_R0 / surf_target.major_radius()
+# The seed wout stores coordinates in whatever units it was solved in (for
+# this seed, the s=0.24 surface has R0≈1.056 m). Rescale so the new LCFS has
+# R0=VMEC_R0.
+seed_R0_at_s = surf_target.major_radius()
+scale = VMEC_R0 / seed_R0_at_s
 surf_target.set_dofs(surf_target.get_dofs() * scale)
 
-print(f"  Original s={VMEC_S} surface:  R0 = {VMEC_R0/scale:.4f} m  →  scaled R0 = {surf_target.major_radius():.4f} m")
-print(f"  Scaled minor radius (r0):  {surf_target.minor_radius():.4f} m")
-print(f"  Scale factor applied:       {scale:.6f}")
+print(f"  Seed s={VMEC_S} surface:     R0 = {seed_R0_at_s:.6f} m")
+print(f"  Rescaled to target:          R0 = {surf_target.major_radius():.6f} m")
+print(f"  Scaled minor radius:         r0 = {surf_target.minor_radius():.6f} m")
+print(f"  Scale factor applied:        {scale:.6f}")
 
 # ---------------------------------------------------------------------------
 # STEP 2 — Read auxiliary quantities from the original wout
 # ---------------------------------------------------------------------------
-# These are needed to set up consistent initial conditions for the new VMEC run.
 wout_nc = netCDF4.Dataset(WOUT_FILE, 'r')
 ns_orig = int(wout_nc.variables['ns'][:])
 s_orig  = np.linspace(0, 1, ns_orig)
 
 # --- Enclosed toroidal flux at s=VMEC_S ---
-# Toroidal flux Φ scales as (length)^2, so after rescaling coordinates by `scale`,
-# the enclosed flux at s=VMEC_S becomes scale^2 * phi_s024.
-phi_orig   = wout_nc.variables['phi'][:]          # Wb on full-grid (s=0..1)
-phi_at_s   = float(np.interp(VMEC_S, s_orig, phi_orig))
+# phi is linear in s in VMEC. Coordinate rescaling adds scale^2
+# (B*area ~ length^2 at fixed B scale).
+phi_orig    = wout_nc.variables['phi'][:]
+phi_at_s    = float(np.interp(VMEC_S, s_orig, phi_orig))
 phiedge_new = phi_at_s * scale**2
-print(f"\n  Original phi at s={VMEC_S}: {phi_at_s:.6e} Wb")
-print(f"  New phiedge (scaled):       {phiedge_new:.6e} Wb")
+print(f"\n  Seed phi at s={VMEC_S}:       {phi_at_s:.6e} Wb")
+print(f"  New phiedge (scaled):        {phiedge_new:.6e} Wb")
 
 # --- Iota profile ---
-# The new VMEC domain covers s_new ∈ [0,1], which corresponds to s_orig ∈ [0, VMEC_S].
-# The iota profile must be re-expressed in the new normalized coordinate before fitting:
-#   s_orig = s_new * VMEC_S   =>   iota_new(s_new) = iota_orig(s_new * VMEC_S)
-#
-# We enforce a hard boundary condition: iota(s_new=1) = iota_orig(s_orig=VMEC_S).
-# This ensures that the edge iota of the new equilibrium exactly matches the iota
-# at the surface we are using as the new LCFS.
+# The new VMEC domain covers s_new ∈ [0,1] = s_orig ∈ [0, VMEC_S].
+# Remap:  iota_new(s_new) = iota_orig(s_new * VMEC_S)
+# Hard BC: iota_new(1) = iota_orig(VMEC_S) → iota at the new LCFS matches
+# the iota at the surface being used as the boundary.
 #
 # Constrained polynomial fit:
-#   We want p(s) = a_0 + a_1*s + ... + a_n*s^n  with  p(1) = iota_target.
-#   p(1) = sum(a_i) = iota_target  is a linear constraint.
+#   p(s) = a_0 + a_1*s + ... + a_n*s^n  with  p(1) = iota_target.
 #   Substitute a_n = iota_target - sum_{k<n} a_k, giving:
 #     p(s) = iota_target * s^n  +  sum_{k<n} a_k * (s^k - s^n)
 #   The modified design matrix has columns [s^k - s^n for k=0..n-1] and the
-#   known term iota_target * s^n is moved to the right-hand side.
-#   Solving for [a_0, ..., a_{n-1}] with lstsq then gives the constrained fit.
-iotaf_orig   = wout_nc.variables['iotaf'][:]
-iota_target  = float(np.interp(VMEC_S, s_orig, iotaf_orig))  # iota at the new LCFS
+#   iota_target * s^n term moves to the rhs.
+iotaf_orig  = wout_nc.variables['iotaf'][:]
+iota_target = float(np.interp(VMEC_S, s_orig, iotaf_orig))
 
-# Build the remapped grid: s_new = s_orig / VMEC_S, but only up to VMEC_S
 mask    = s_orig <= VMEC_S + 1e-9
-s_new   = s_orig[mask] / VMEC_S                # remapped to [0, 1]
-iota_r  = iotaf_orig[mask]                      # corresponding iota values
+s_new   = s_orig[mask] / VMEC_S
+iota_r  = iotaf_orig[mask]
 
-POLY_DEG = 4
 n = POLY_DEG
-# Design matrix for degree-n polynomial: columns are s^0, s^1, ..., s^{n-1}
-# (we solve for a_0..a_{n-1}; a_n is determined by the constraint)
 A = np.column_stack([s_new**k - s_new**n for k in range(n)])
 rhs = iota_r - iota_target * s_new**n
-coeffs_low, _, _, _ = np.linalg.lstsq(A, rhs, rcond=None)  # a_0 .. a_{n-1}
-a_n = iota_target - np.sum(coeffs_low)                      # a_n from constraint
+coeffs_low, _, _, _ = np.linalg.lstsq(A, rhs, rcond=None)
+a_n = iota_target - np.sum(coeffs_low)
+ai_coeffs = np.append(coeffs_low, a_n)  # [a_0, a_1, ..., a_n]
 
-# Full coefficient array: lowest power first (VMEC convention)
-ai_coeffs = np.append(coeffs_low, a_n)   # [a_0, a_1, ..., a_n]
+iota_fit = np.polyval(ai_coeffs[::-1], s_new)
+print(f"\n  Iota profile (remapped to s_new ∈ [0,1], poly deg {POLY_DEG}):")
+print(f"    iota(s_new=0) (axis):   {np.polyval(ai_coeffs[::-1], 0.0):.6f}")
+print(f"    iota(s_new=1) (edge):   {np.polyval(ai_coeffs[::-1], 1.0):.6f}  (target: {iota_target:.6f})")
+print(f"    Max fit residual:       {np.max(np.abs(iota_fit - iota_r)):.2e}")
+print(f"    Coefficients (a_0..a_n): {ai_coeffs}")
 
-# Verify constraint and fit quality
-iota_fit = np.polyval(ai_coeffs[::-1], s_new)   # polyval wants highest-first
-print(f"\n  Iota profile (remapped to new s_new ∈ [0,1]):")
-print(f"  Boundary condition:  iota(s_new=1) = iota_orig(s={VMEC_S}) = {iota_target:.6f}")
-print(f"  Fitted iota at s_new=0 (axis): {np.polyval(ai_coeffs[::-1], 0.0):.6f}")
-print(f"  Fitted iota at s_new=1 (edge): {np.polyval(ai_coeffs[::-1], 1.0):.6f}  (target: {iota_target:.6f})")
-print(f"  Max fit residual:              {np.max(np.abs(iota_fit - iota_r)):.2e}")
-print(f"  Coefficients (lowest power first): {ai_coeffs}")
-
-# --- Magnetic axis ---
-# Scale the axis position by the same factor as the boundary.
+# --- Magnetic axis initial guess ---
 raxis_cc_orig = np.array(wout_nc.variables['raxis_cc'][:]) * scale
 zaxis_cs_orig = np.array(wout_nc.variables['zaxis_cs'][:]) * scale
 print(f"\n  Scaled magnetic axis R0: {raxis_cc_orig[0]:.6f} m")
-
 wout_nc.close()
 
 # ---------------------------------------------------------------------------
 # STEP 3 — Set up VMEC with the new boundary
 # ---------------------------------------------------------------------------
-# VMEC writes all its files (input.*, wout_*.nc, threed1.*, parvmecinfo.txt)
-# relative to the current working directory at the time the Vmec object is
-# constructed — the input file is created immediately, and threed1 is written
-# alongside it.  Change to OUT_DIR before construction so every VMEC file
-# lands there rather than in banana_drivers/.
+# VMEC writes input.*, wout_*.nc, threed1.*, parvmecinfo.txt relative to the
+# cwd at the time the Vmec object is constructed, so chdir into OUT_DIR first.
 _orig_dir = os.getcwd()
 os.chdir(OUT_DIR)
 print(f"\nSetting up VMEC from template: {TEMPLATE_INPUT}")
 vmec = Vmec(TEMPLATE_INPUT, verbose=True)
 
-# Grid and resolution
 vmec.indata.nfp   = surf_target.nfp
 vmec.indata.lasym = not surf_target.stellsym
 vmec.indata.mpol  = MPOL
 vmec.indata.ntor  = NTOR
 
-# Convergence sequence: VMEC solves on increasingly fine radial grids.
-# indata arrays are fixed-length Fortran arrays — write into the existing
-# buffer with [...] rather than replacing the object with assignment.
-vmec.indata.ns_array[:len(NS_ARRAY)]    = NS_ARRAY
+# indata arrays are fixed-length Fortran buffers — overwrite with [...].
+vmec.indata.ns_array[:len(NS_ARRAY)]       = NS_ARRAY
 vmec.indata.niter_array[:len(NITER_ARRAY)] = NITER_ARRAY
 vmec.indata.ftol_array[:len(FTOL_ARRAY)]   = FTOL_ARRAY
 
-# Enclosed toroidal flux (determines the absolute B-field scale)
 vmec.indata.phiedge = phiedge_new
 
-# Pressure: zero beta (vacuum/low-beta assumption)
+# Zero-beta (vacuum assumption)
 vmec.indata.pres_scale = 0.0
 vmec.indata.am[:]      = 0.0
 
-# Iota profile (ncurr=0: VMEC uses the prescribed iota, not a current profile).
-# ai_coeffs[k] is the coefficient of s^k (lowest power first), which is the
-# VMEC power_series convention: iota(s) = ai[0] + ai[1]*s + ai[2]*s^2 + ...
-# ai is a fixed-length Fortran array — write into the buffer with [...].
+# Iota profile (ncurr=0: use prescribed iota, not current profile).
+# ai[k] is coefficient of s^k (lowest power first), VMEC power_series convention.
 vmec.indata.ncurr      = 0
 vmec.indata.piota_type = 'power_series'
 vmec.indata.ai[:len(ai_coeffs)] = ai_coeffs
 
-# Magnetic axis initial guess (scaled from original wout).
-# raxis_cc / zaxis_cs are fixed-length Fortran arrays — write into the buffer.
+# Magnetic axis initial guess
 vmec.indata.raxis_cc[:len(raxis_cc_orig)] = raxis_cc_orig
 vmec.indata.zaxis_cs[:len(zaxis_cs_orig)] = zaxis_cs_orig
 
-# Boundary: set to the scaled s=VMEC_S surface.
-# Vmec.boundary is a SurfaceRZFourier; its rc/zs arrays are written to the
-# input file's RBC/ZBS entries when vmec.run() is called.
+# Prescribed LCFS boundary
 vmec.boundary = surf_target
 
 print("\nVMEC parameters:")
@@ -226,59 +234,45 @@ os.chdir(_orig_dir)
 print("VMEC run complete.")
 
 # ---------------------------------------------------------------------------
-# STEP 5 — Verify: compare new LCFS to original s=VMEC_S surface
+# STEP 5 — Verify
 # ---------------------------------------------------------------------------
-print("\n" + "="*60)
-print("VERIFICATION: New LCFS vs. Original s=VMEC_S Surface")
-print("="*60)
+print("\n" + "="*72)
+print("VERIFICATION: New LCFS vs. Seed s=" + str(VMEC_S) + " Surface")
+print("="*72)
 
-# --- Geometry ---
 new_surf = SurfaceRZFourier.from_wout(
-    vmec.output_file,
-    s=1.0,
-    range='full torus',
-    nphi=128, ntheta=64,
+    vmec.output_file, s=1.0, range='full torus', nphi=128, ntheta=64,
 )
 print(f"\nGeometry comparison:")
-print(f"  {'Quantity':<30} {'Original s={:.2f}'.format(VMEC_S):<22} {'New LCFS (s=1)'}")
-print(f"  {'-'*70}")
-print(f"  {'Major radius R0 (m)':<30} {VMEC_R0:<22.6f} {new_surf.major_radius():<.6f}")
-print(f"  {'Minor radius r0 (m)':<30} {surf_target.minor_radius():<22.6f} {new_surf.minor_radius():<.6f}")
+print(f"  {'Quantity':<30} {'Rescaled seed s=' + str(VMEC_S):<30} {'New LCFS (s=1)'}")
+print(f"  {'-'*78}")
+print(f"  {'Major radius R0 (m)':<30} {VMEC_R0:<30.6f} {new_surf.major_radius():.6f}")
+print(f"  {'Minor radius r0 (m)':<30} {surf_target.minor_radius():<30.6f} {new_surf.minor_radius():.6f}")
 
-# --- Iota ---
 wout_new = netCDF4.Dataset(vmec.output_file, 'r')
-ns_new   = int(wout_new.variables['ns'][:])
 iotaf_new = wout_new.variables['iotaf'][:]
 iota_orig_at_s = float(np.interp(VMEC_S, s_orig, iotaf_orig))
-print(f"\nIota comparison (edge = target plasma surface):")
-print(f"  Original iota at s={VMEC_S}:      {iota_orig_at_s:.6f}")
-print(f"  New iota at s=1 (LCFS):      {float(iotaf_new[-1]):.6f}")
-print(f"  New iota at s=0 (axis):      {float(iotaf_new[0]):.6f}")
+print(f"\nIota comparison:")
+print(f"  Seed iota at s={VMEC_S}:           {iota_orig_at_s:.6f}")
+print(f"  New iota at s=1 (LCFS):       {float(iotaf_new[-1]):.6f}")
+print(f"  New iota at s=0 (axis):       {float(iotaf_new[0]):.6f}")
+wout_new.close()
 
-# --- Fourier mode comparison ---
-# Compare the leading Fourier modes of the new LCFS to the original s=VMEC_S surface
-# (in VMEC coordinates — note these are NOT yet in Boozer coordinates).
-print(f"\nLeading Fourier modes (VMEC coordinates, unscaled):")
-print(f"  {'Mode':<14} {'Orig s={:.2f}'.format(VMEC_S):<22} New LCFS")
-print(f"  {'-'*50}")
-for m, n, attr in [(0, 0, 'rc'), (1, 0, 'rc'), (1, 0, 'zs'), (2, 0, 'rc')]:
+print(f"\nLeading Fourier modes (VMEC coordinates):")
+print(f"  {'Mode':<14} {'Target (rescaled)':<22} {'New LCFS'}")
+print(f"  {'-'*54}")
+for m, n_idx, attr in [(0, 0, 'rc'), (1, 0, 'rc'), (1, 0, 'zs'), (2, 0, 'rc')]:
     try:
-        orig_val = getattr(surf_target, f'get_{attr}')(m, n)
-        new_val  = getattr(new_surf, f'get_{attr}')(m, n)
-        print(f"  {attr}({m},{n})          {orig_val:<22.6f} {new_val:.6f}")
+        orig_val = getattr(surf_target, f'get_{attr}')(m, n_idx)
+        new_val  = getattr(new_surf, f'get_{attr}')(m, n_idx)
+        print(f"  {attr}({m},{n_idx}):       {orig_val:<22.6f} {new_val:.6f}")
     except Exception:
         pass
 
-wout_new.close()
-
-# --- Rename wout ---
-# Filename encodes nfp (2-digit zero-padded) and edge iota at s=1 (3-digit
-# zero-padded, value × 100 rounded to nearest integer).
-nfp_label  = int(new_surf.nfp)
-iota_label = int(round(float(iotaf_new[-1]) * 100))
-out_wout   = os.path.join(OUT_DIR, f'wout_nfp{nfp_label:02d}iota{iota_label:03d}_000_000000.nc')
-os.rename(vmec.output_file, out_wout)
-print(f"\nNew wout saved to: {out_wout}")
-print("Load in future scripts with:")
-print(f"  SurfaceRZFourier.from_wout('{out_wout}', s=1.0, range='full torus')")
-print("(no rescaling needed — LCFS is already the target plasma surface)")
+# ---------------------------------------------------------------------------
+# STEP 6 — Copy wout to the configured output path
+# ---------------------------------------------------------------------------
+shutil.copy2(vmec.output_file, OUT_WOUT_FILE)
+print(f"\nResized wout copied to:\n  {OUT_WOUT_FILE}")
+print("\nStage 1 will warm-start from this file (LCFS = target plasma boundary);")
+print("no further rescaling is needed in any downstream driver.")

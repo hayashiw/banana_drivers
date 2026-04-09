@@ -59,7 +59,6 @@ with open(_cfg_path) as _f:
 # Device geometry
 NFP      = cfg['device']['nfp']
 STELLSYM = cfg['device']['stellsym']
-PLASMA_R = cfg['plasma_surface']['vmec_R']  # target plasma major radius (m)
 
 # Stage 1 settings
 s1 = cfg['stage1']
@@ -174,16 +173,16 @@ if COLD_START:
     surf.set_zs(1, 0, COLD_A)
     proc0_print(f'  R0={COLD_R0}, a={COLD_A}, phiedge={COLD_PHIEDGE}')
 else:
-    # Warm start: Vmec() requires an input file to be runnable.
-    # Load from default input (which gives indata), then transfer the
-    # boundary shape and equilibrium parameters from the wout.
+    # Warm start: the seed wout has been pre-processed by vmec_resize_driver.py
+    # to have LCFS (s=1) == target plasma boundary, at the correct major radius
+    # and enclosed toroidal flux. Stage 1 just loads it as-is — no rescaling.
     proc0_print(f'Warm start: seeding boundary from {WOUT_FILE}')
     import netCDF4 as nc4
     ds = nc4.Dataset(WOUT_FILE)
     wout_nfp = int(ds.variables['nfp'][:])
     wout_mpol = int(ds.variables['mpol'][:])
     wout_ntor = int(ds.variables['ntor'][:])
-    wout_phiedge = float(ds.variables['phi'][:][-1])  # total toroidal flux
+    wout_phiedge = float(ds.variables['phi'][:][-1])
     ds.close()
 
     vmec = Vmec(mpi=mpi)
@@ -191,44 +190,27 @@ else:
     vmec.indata.mpol = max(wout_mpol, VMEC_MPOL[0])
     vmec.indata.ntor = max(wout_ntor, VMEC_NTOR[0])
     vmec.indata.phiedge = wout_phiedge
-    # Bump NITER for high-mpol resolution steps. The default input.default
-    # ships with niter_array[:]=3000 per multigrid level, which was enough
-    # for the native-scale seed equilibrium (R0≈1.07 m) but insufficient at
-    # the rescaled scale (R0=0.925 m, phiedge≈0.062) when vmec.mpol=5 — see
-    # job 51257661 where FSQR plateaued at 1.56e-10, just above FTOLV=1e-10.
+    # Bump NITER for the high-mpol resolution steps. input.default ships with
+    # niter_array[:]=3000, insufficient at mpol=5 for this equilibrium — see
+    # job 51257661 where FSQR plateaued at 1.56e-10 above FTOLV=1e-10.
     vmec.indata.niter_array[:] = 10000
 
     # CRITICAL: Vmec's Optimizable DOF cache was populated from input.default
     # (phiedge=1.0) during __init__. Overriding vmec.indata.phiedge alone does
     # NOT update that cache — so when the least-squares optimizer later calls
-    # `prob.x = x` (which propagates free DOFs through the tree), Vmec.set_dofs
-    # is invoked with the stale [1.0, 0.0, 1.0] vector and silently resets
-    # indata.phiedge back to 1.0. Re-syncing local_full_x from indata here
-    # locks the cache to the seed wout's phiedge so it survives DOF tree syncs.
-    # Without this fix the stage 1 output has |B| ~12 T (phiedge=1.0) instead
-    # of ~1 T (phiedge=0.083).
+    # `prob.x = x`, Vmec.set_dofs is invoked with the stale [1.0, 0.0, 1.0]
+    # vector and silently resets indata.phiedge back to 1.0. Re-syncing
+    # local_full_x from indata here locks the cache to the seed wout's phiedge.
     vmec.local_full_x = np.asarray(vmec.get_dofs())
 
-    # Read the LCFS boundary from the wout and assign to vmec
+    # Load LCFS directly — the resized seed has LCFS == target boundary.
     from simsopt.geo import SurfaceRZFourier
     wout_surf = SurfaceRZFourier.from_wout(WOUT_FILE, range='full torus',
                                            nphi=50, ntheta=50)
-
-    # Rescale boundary to target plasma radius so VMEC optimizes at the
-    # correct scale. Without this, stage 1 optimizes at the seed's native R0
-    # and load_vmec_surface must post-hoc rescale, distorting the result.
-    _seed_R0 = wout_surf.major_radius()
-    _scale = PLASMA_R / _seed_R0
-    wout_surf.set_dofs(wout_surf.get_dofs() * _scale)
-    # Rescale phiedge consistently: Φ ∝ B₀ R₀² scales as R₀² for fixed B₀
-    vmec.indata.phiedge *= _scale**2
-    vmec.local_full_x = np.asarray(vmec.get_dofs())  # re-sync DOF cache
-    proc0_print(f'  Rescaled boundary: R0 {_seed_R0:.4f} → {PLASMA_R:.4f} m '
-                f'(scale={_scale:.6f}), phiedge {wout_phiedge:.6f} → {vmec.indata.phiedge:.6f}')
-
     vmec.boundary = wout_surf
     proc0_print(f'  nfp={wout_nfp}, mpol={vmec.indata.mpol}, ntor={vmec.indata.ntor}, '
-                f'phiedge={vmec.indata.phiedge:.6f}')
+                f'phiedge={vmec.indata.phiedge:.6f}, '
+                f'R0={wout_surf.major_radius():.4f} m')
 
 vmec.verbose = mpi.proc0_world
 surf = vmec.boundary
@@ -253,9 +235,10 @@ def _build_prob():
     boozer resolution.  LeastSquaresProblem caches nvals on first eval and
     cannot handle a size change, so we rebuild it at each resolution step.
     """
+    # Only iota_edge is targeted — iota_axis is left free so the optimizer
+    # can preserve whatever magnetic shear the QA solution prefers.
     tuples = [
         (vmec.aspect, ASPECT_TARGET, ASPECT_WEIGHT),
-        (vmec.iota_axis, IOTA_TARGET, IOTA_WEIGHT),
         (vmec.iota_edge, IOTA_TARGET, IOTA_WEIGHT),
         (vmec.volume, VOLUME_TARGET, VOLUME_WEIGHT),
     ]
@@ -265,7 +248,7 @@ def _build_prob():
 
 
 prob = _build_prob()
-proc0_print(f'  {4 + len(qs_list)} objective terms (aspect + 2 iota + volume + {len(qs_list)} QS surfaces)')
+proc0_print(f'  {3 + len(qs_list)} objective terms (aspect + iota_edge + volume + {len(qs_list)} QS surfaces)')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -460,8 +443,9 @@ aspect_err = abs(final_aspect - ASPECT_TARGET) if _final_ok else float('nan')
 iota_axis_err = abs(final_iota_ax - IOTA_TARGET) if _final_ok else float('nan')
 iota_edge_err = abs(final_iota_ed - IOTA_TARGET) if _final_ok else float('nan')
 
-# Simple success criteria: iota within 10% of target, QS improved
-success = _final_ok and (iota_axis_err / IOTA_TARGET < 0.10) and (iota_edge_err / IOTA_TARGET < 0.50)
+# Success criterion: iota_edge is the targeted objective, so we gate on it.
+# iota_axis is left free and reported for diagnostics only.
+success = _final_ok and (iota_edge_err / IOTA_TARGET < 0.10)
 
 proc0_print(
     f"""

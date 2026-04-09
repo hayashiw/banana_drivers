@@ -35,7 +35,7 @@ banana_drivers/
   poincare_tracing.py                # Poincare field-line tracing + raw surface overlay
   patch_surface_quadpoints.py        # One-shot patcher for legacy half-period BoozerSurface JSON files
   boozxform_driver.py                # Legacy booz_xform surface extraction (superseded by stage 1)
-  vmec_resize_driver.py              # Legacy VMEC resize utility (superseded by stage 1)
+  vmec_resize_driver.py              # One-time preprocessing: extract s=0.24 of original seed wout and re-solve VMEC to produce wout_stage1_seed.nc (LCFS = target plasma boundary)
   inputs/                            # wout seed, stage1_boozersurface_opt.json, vf_biotsavart.json
   outputs/                           # Local fallback only — primary outputs go to $SCRATCH/banana_drivers_outputs/
   utils/
@@ -98,8 +98,22 @@ Three modes selectable via `current_mode_stage2` in config.yaml or `BANANA_CURRE
 
 `CurrentPenaltyWrapper` (in `utils/current_penalty.py`) is the adapter that makes `ScaledCurrent` compatible with `QuadraticPenalty`; shared between stage 2 (penalized mode) and singlestage. The gradient uses `sign(I) * scaled_current.vjp([1.0])` — the `vjp` carries the `ScaledCurrent` scale factor via SIMSOPT's chain rule, so a naive `sign(I)` alone would underweight the gradient by ~10^4.
 
-### Stage 1 boundary rescaling
-Stage 1 rescales the warm-start seed boundary to the target plasma radius (`plasma_surface.vmec_R`) **before** VMEC optimization, so the optimized equilibrium is at the correct scale. Downstream stages (stage 2, singlestage) receive an already-scaled surface via the BoozerSurface JSON chain and do NOT rescale. `load_vmec_surface` in `utils/init_boozersurface.py` and singlestage both have a > 1% mismatch guard that applies legacy rescaling with a warning if the wout is not pre-scaled (e.g., from an old stage 1 run).
+### Stage 1 seed: vmec_resize_driver.py preprocessing
+The original `wout_nfp22ginsburg_000_014417_iota15.nc` was sized such that its **s=0.24** flux surface matched the physical plasma boundary at R0=0.925 m; the outer 76% of the volume was auxiliary (see jhalpern30/simsopt STAGE_2/banana_coil_solver.py lines 25-27, 304 for the reference extraction).
+
+`vmec_resize_driver.py` is a one-time preprocessing step that:
+1. Loads s=0.24 of the original seed and rescales coordinates by `vmec_R / major_radius()`
+2. Rescales enclosed toroidal flux by `scale²` (phi is linear in s; coordinate rescale adds the length² factor)
+3. Remaps the iota profile to the new domain `s_new = s_orig / 0.24` via a constrained polynomial fit (hard BC `iota(s_new=1) = iota_orig(s=0.24)`)
+4. Scales the magnetic axis guess by the same factor
+5. Re-solves VMEC at a multi-grid ns ramp → writes `inputs/wout_stage1_seed.nc` whose **LCFS (s=1) IS the target plasma boundary**
+
+Stage 1 then warm-starts from this seed with no boundary rescaling — the warm-start branch of `01_stage1_driver.py` loads the LCFS directly. Downstream drivers (`utils/init_boozersurface.py`, `03_singlestage_driver.py`) extract `plasma_surface.vmec_s = 1.0` (i.e., the LCFS of the stage 1 output wout) and never rescale.
+
+Config keys in `stage1_resize`: `seed_wout_filepath`, `output_filepath`, `inner_s`, `poly_deg`, `mpol`, `ntor`, `ns_array`, `niter_array`, `ftol_array`.
+
+### Stage 1 objective
+Stage 1 minimizes: `aspect → aspect_target`, `iota_edge → iota_target`, `volume → volume_target`, and quasisymmetry residuals at `qs_surfaces`. **`iota_axis` is NOT in the objective** — it is left free so the optimizer can preserve whatever magnetic shear the QA solution prefers. The success criterion gates only on `iota_edge` error (< 10% of target). Targets in `config.yaml:stage1` are sized for the resized seed, not the original.
 
 ### Stage 2 solver: ALM by default
 Stage 2 uses the augmented Lagrangian method (`stage2_mode: alm` in config.yaml). Rationale:

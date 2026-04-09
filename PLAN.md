@@ -1,6 +1,6 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-09 (SquaredFlux native threshold ported from PedroGil; ALM preset selector `throttled`/`unthrottled` added; stage 1 warm-start boundary rescaling; `dof_scale` documented as coordinate rescaling not step bound; stage 1 `LeastSquaresProblem` rebuild across resolution steps)
+Last updated: 2026-04-09 (Stage 1 seed wout now produced via `vmec_resize_driver.py` preprocessing — extracts s=0.24 of original seed, re-solves VMEC so LCFS = target plasma boundary; stage 1 warm-start rescaling removed; `plasma_surface.vmec_s` changed 0.24 → 1.0; `iota_axis` dropped from stage 1 objective; targets rescaled to new seed actuals)
 
 ## Current Status
 
@@ -35,6 +35,26 @@ Output file pruning applied to stage 2 and singlestage drivers — VTK and subse
 Individual config keys and env vars override preset defaults (resolution: env var > config key > preset).
 
 **Stage 1 warm-start boundary rescaling (2026-04-09):** Stage 1 now rescales the seed wout LCFS to `plasma_surface.vmec_R` **before** VMEC optimization, so the optimized equilibrium is at the correct scale. Previously, `load_vmec_surface` (in `utils/init_boozersurface.py`) applied a post-hoc rescaling that distorted the stage-1-optimized shape. Downstream stages (stage 2, singlestage) now receive an already-scaled surface and do NOT rescale. Both `load_vmec_surface` and singlestage have a > 1% mismatch guard that applies legacy rescaling with a warning for backward compatibility with old wout files.
+
+**Stage 1 seed volume bug diagnosed — vmec_resize_driver.py preprocessing step added (2026-04-09):** The original seed `wout_nfp22ginsburg_000_014417_iota15.nc` was designed such that its **s=0.24** flux surface — not its LCFS — matched the physical plasma boundary at R0=0.925 m. The outer 76% of its volume was auxiliary. The jhalpern30/simsopt reference script (`STAGE_2/banana_coil_solver.py` lines 25-27, 304) makes this explicit: `SurfaceRZFourier.from_wout(..., s=0.24)` then `set_dofs(* R0/major_radius())`. Our prior stage 1 was loading the seed **LCFS** (`from_wout` without `s=`) and applying only the rescaling half — it was optimizing a downscaled version of the full seed volume instead of the inner core. Consequences:
+- Stage 1 volume was `~0.45 m³` instead of `~0.097 m³` (5× too large).
+- Stage 1 aspect target was `6.45` (valid for seed LCFS) instead of `12.70` (new s=0.24 aspect).
+- `load_vmec_surface` then re-extracted `s=0.24` from stage 1's output wout, giving a surface that was `s=0.24` of a rescaled version of the full seed — compounding the error.
+- Stage 1 at `mpol=5` hit VMEC `niter` walls and spurious `ARNORM OR AZNORM EQUAL ZERO` axis degeneracies because the rescaled full-volume boundary was stiff.
+
+**Fix:** `vmec_resize_driver.py` reworked into a config-driven one-time preprocessing step. It loads `s=stage1_resize.inner_s` (0.24 by default) of the original seed, rescales by `vmec_R / major_radius()`, rescales `phiedge_new = phi_at_s * scale²` (phi linear in s; length² from coordinate rescale), remaps iota via a constrained polynomial fit with BC `iota(s_new=1) = iota_orig(s=0.24)` (`poly_deg=4`), scales the magnetic axis guess, and re-solves VMEC on a multi-grid ns ramp `[13, 25, 51]`. Output: `inputs/wout_stage1_seed.nc` (LCFS == target plasma boundary). Verified 2026-04-09: `R0=0.925 m`, `volume=0.0969 m³`, `aspect=12.70`, `iota_edge=0.120`, `iota_axis=0.148`.
+
+Downstream changes:
+- `config.yaml:warm_start.wout_filepath` → `inputs/wout_stage1_seed.nc`
+- `config.yaml:plasma_surface.vmec_s`: 0.24 → **1.0** (downstream drivers now extract LCFS of stage 1 output)
+- `config.yaml:stage1.aspect_target`: 6.45 → **12.70**
+- `config.yaml:stage1.volume_target`: 0.5767 → **0.0969** m³
+- `config.yaml:stage1.iota_target`: kept at 0.15 (physics goal — seed has iota_edge=0.120)
+- `01_stage1_driver.py` warm-start branch: rescaling and phiedge scale² removed; loads LCFS directly
+- `01_stage1_driver.py` objective: dropped `(vmec.iota_axis, ...)` — iota_axis is left free so the optimizer can preserve whatever magnetic shear the QA solution prefers; success criterion gates only on `iota_edge`
+- `utils/init_boozersurface.py` + `03_singlestage_driver.py`: 1% mismatch guards removed (no longer needed)
+
+Stage 1 output `stage1_boozersurface_opt.json` from job 51259276 is now obsolete — the warm-start surface has the wrong volume and wrong coil/surface geometry. Needs a full stage 1 rerun, then stage 2 rerun, before any downstream work.
 
 **Stage 1 `LeastSquaresProblem` residual-dimension crash (job 51256877, 2026-04-09):** Step 1 completed (aspect 6.427, iota 0.159/0.137, QS 2.27e-3), but step 2 crashed with `ValueError: operands could not be broadcast together with shapes (1492,) (3388,)`. Root cause: `Quasisymmetry.J()` returns one residual per symmetry-breaking Boozer mode. When `boozer.mpol/ntor` increased from 16→24 between steps, the residual length changed from 1492 → 3388, but `LeastSquaresProblem` caches `nvals` on first evaluation and cannot handle the resize. The SIMSOPT `resolution_increase_boozer.py` example has the same latent bug but never hits it because the example uses `max_nfev=1` (smoke test only). Fix: factored problem construction into `_build_prob()` and call it inside the resolution loop after updating `boozer.mpol/ntor`. Resubmitted as 51257661.
 

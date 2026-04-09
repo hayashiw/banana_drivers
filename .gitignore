@@ -116,3 +116,5 @@ threed1.*
 
 # Post process files
 *.csv
+*.ipynb
+*.ipynb_checkpoints

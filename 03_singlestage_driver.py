@@ -98,7 +98,6 @@ NTOR   = cfg['boozer']['ntor']
 NPHI   = cfg['plasma_surface']['nphi']
 NTHETA = cfg['plasma_surface']['ntheta']
 VMEC_S = cfg['plasma_surface']['vmec_s']
-VMEC_R = cfg['plasma_surface']['vmec_R']
 WOUT_FILE = os.path.join(OUT_DIR, cfg['warm_start']['stage1_wout_filename'])
 
 # Objective thresholds (hardware constraints — not relaxable)
@@ -199,18 +198,8 @@ proc0_print(f'Loading BoozerSurface from {STAGE2_BSURF_FILE}')
 surface = SurfaceRZFourier.from_wout(
     WOUT_FILE, range="field period", nphi=NPHI, ntheta=NTHETA, s=VMEC_S,
 )
-# Rescaling to VMEC_R is now done in stage 1 before optimization, so the
-# stage 1 wout should already be at the correct scale. Only apply legacy
-# rescaling if there is a significant mismatch (> 1%).
-_surf_R0 = surface.major_radius()
-if abs(_surf_R0 - VMEC_R) / VMEC_R > 0.01:
-    import warnings
-    warnings.warn(
-        f"singlestage: wout R0={_surf_R0:.4f} differs from "
-        f"vmec_R={VMEC_R} by > 1%. Applying legacy rescaling. "
-        f"Consider re-running stage 1 to produce a pre-scaled wout."
-    )
-    surface.set_dofs(surface.get_dofs() * VMEC_R / _surf_R0)
+# The stage 1 seed (produced by vmec_resize_driver.py) has LCFS == target
+# plasma boundary, and stage 1 preserves this. No rescaling is needed.
 gamma = surface.gamma().copy()
 quadpoints_theta = surface.quadpoints_theta.copy()
 quadpoints_phi = surface.quadpoints_phi.copy()

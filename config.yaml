@@ -16,7 +16,9 @@
 # Input paths are relative to banana_drivers/. Output filenames are resolved
 # against the output directory ($SCRATCH/banana_drivers_outputs/ or ./outputs/).
 warm_start:
-  wout_filepath: "inputs/wout_nfp22ginsburg_000_014417_iota15.nc"       # seed wout for 01_stage1 warm start
+  wout_filepath: "inputs/wout_stage1_seed.nc"                           # resized seed wout (LCFS = target boundary);
+                                                                         # produced by vmec_resize_driver.py from the
+                                                                         # original wout_nfp22ginsburg_000_014417_iota15.nc
   init_bsurf_filepath: "inputs/stage1_boozersurface_opt.json"           # from 01_stage1
   stage1_wout_filename: "wout_stage1.nc"                                # from 01_stage1 (resolved against output dir)
   stage2_bsurf_filename: "stage2_boozersurface_opt.json"                # from 02_stage2 (resolved against output dir)
@@ -79,11 +81,37 @@ winding_surface:
   a: 0.215        # m (minor radius)
 
 # ── Plasma surface (VMEC) ───────────────────────────────────────────────────
+# In the current pipeline, stage 1 warm-starts from a resized seed wout whose
+# LCFS (s=1) IS the target plasma boundary — so downstream drivers load s=1.
+# vmec_s is kept in config for flexibility (finite-beta / core extraction
+# experiments may want an inner surface again) but the default is 1.0.
 plasma_surface:
   nphi: 255
   ntheta: 64
-  vmec_s: 0.24    # Flux surface label
+  vmec_s: 1.0     # Flux surface label in the stage 1 wout (1.0 = LCFS = target boundary)
   vmec_R: 0.925   # Target major radius (m)
+
+# ── Stage 1 seed wout preprocessing (vmec_resize_driver.py) ─────────────────
+# One-time preprocessing step: extract the inner_s surface of the original
+# seed wout, rescale to vmec_R, remap the iota profile, and re-solve VMEC to
+# produce a new wout whose LCFS (s=1) IS the target plasma boundary. The
+# output is written to warm_start.wout_filepath and used as the stage 1 seed.
+#
+# Rationale: the original wout was sized such that its s=0.24 surface matched
+# the physical plasma boundary; the outer 76% of its volume was auxiliary.
+# Running stage 1 directly against the original LCFS (our previous mistake)
+# optimizes the wrong equilibrium. See the jhalpern30 reference script
+# STAGE_2/banana_coil_solver.py for the original extraction approach.
+stage1_resize:
+  seed_wout_filepath: "inputs/wout_nfp22ginsburg_000_014417_iota15.nc"  # original seed
+  output_filepath: "inputs/wout_stage1_seed.nc"                         # resized output
+  inner_s: 0.24            # Flux surface label in the seed to use as the new LCFS
+  poly_deg: 4              # Iota profile polynomial degree (VMEC power_series)
+  mpol: 5
+  ntor: 5
+  ns_array: [13, 25, 51]
+  niter_array: [1000, 2000, 5000]
+  ftol_array: [1.0e-10, 1.0e-12, 1.0e-14]
 
 # ── Stage 1 (VMEC fixed-boundary optimization) ──────────────────────────────
 stage1:
@@ -100,10 +128,16 @@ stage1:
   # QA target (M=1, N=0)
   qs_surfaces: [0.25, 0.5, 0.75]     # Flux surfaces for QS targeting
 
-  # Physics targets (overridable via BANANA_IOTA, BANANA_VOLUME env vars)
+  # Physics targets (overridable via BANANA_IOTA, BANANA_VOLUME env vars).
+  # Updated for the resized stage 1 seed (s=0.24 extraction of original wout):
+  #   aspect  = 12.70   — measured from wout_stage1_seed.nc LCFS (anchor)
+  #   volume  = 0.0969  — measured from wout_stage1_seed.nc LCFS (anchor)
+  #   iota    = 0.15    — physics target on iota_edge; seed has iota_edge=0.120
+  # Only iota_edge is driven by the stage 1 objective — iota_axis is left free
+  # so stage 1 can preserve whatever magnetic shear the QA optimization prefers.
   iota_target: 0.15
-  aspect_target: 6.45
-  volume_target: 0.5767               # m^3 (from seed wout)
+  aspect_target: 12.70
+  volume_target: 0.0969               # m^3 (from resized seed wout LCFS)
 
   # Objective weights
   aspect_weight: 1.0
