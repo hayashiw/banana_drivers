@@ -36,8 +36,8 @@ APPROACH
 7. Rescale phiedge so VMEC rbtor matches the actual TF coil rbtor
    (mu_0 * N_tf * I_tf / (2*pi)), then re-solve VMEC at the finest ns.
    This is critical: the seed wout was sized for a device with stronger TF
-   coils than the hardware (100 kA x 20 = 0.4 T*m vs. seed ~0.95 T*m), so
-   the resulting |B| was ~2.3x too high and coils could not support the
+   coils than the hardware (80 kA x 20 = 0.32 T*m vs. seed ~0.95 T*m), so
+   the resulting |B| was ~3x too high and coils could not support the
    stage 1 equilibrium as a flux surface. Since stage 1 is a zero-beta
    equilibrium, |B| is linear in phiedge and iota is independent of it.
 8. Save as inputs/wout_stage1_seed.nc (path from config.yaml)

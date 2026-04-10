@@ -32,7 +32,7 @@ device:
 
 # ── TF coils (fixed, not optimized) ─────────────────────────────────────────
 tf_coils:
-  current: 100.0e+3    # A
+  current: 80.0e+3    # A
   num: 20
   nfp: 1
   stellsym: false

@@ -55,6 +55,7 @@ All drivers are submitted via `submit.sh`, which handles SLURM queue selection a
 | `utils/output_dir.py` | Resolve output directory: `$BANANA_OUT_DIR` → `$SCRATCH/banana_drivers_outputs/` → `./outputs/` |
 | `utils/post_process.py` | Extract physics metrics from optimized BoozerSurface files, append to CSV |
 | `utils/generate_vf_coils.py` | Generate VF coil BiotSavart for finite-current cases → `inputs/vf_biotsavart.json` |
+| `utils/hbt_parameters.py` | HBT-EP machine parameters: major radius, winding surface, TF current, target LCFS geometry |
 
 ### On Hold (`local/`)
 
@@ -65,7 +66,7 @@ Legacy files, temp-hold drivers, and the master prompt live in `local/`.
 ## Key Parameters
 
 ### Hardware Constraints
-- **TF coils**: 20 coils, 100 kA each, `R0=0.976 m`, `R1=0.4 m`, order=1 (all fixed)
+- **TF coils**: 20 coils, 80 kA each, `R0=0.976 m`, `R1=0.4 m`, order=1 (all fixed)
 - **Banana coils**: nfp=5, stellsym, wound on winding surface `R0=0.976 m`, `a=0.215 m`, max 16 kA
 - **Banana coil order**: 2 (order=4 produces bad coils)
 - **Banana curvature p-norm**: 4 (L4 produces better coils than L2)

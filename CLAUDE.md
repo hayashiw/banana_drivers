@@ -43,6 +43,7 @@ banana_drivers/
     output_dir.py                    # Resolve output directory ($SCRATCH → ./outputs fallback)
     post_process.py                  # Metrics extraction and CSV comparison
     generate_vf_coils.py             # VF coil generation for finite-current
+    hbt_parameters.py                # HBT-EP machine parameters (major radius, winding surface, TF current, target LCFS)
   local/                             # Legacy files, on-hold drivers, master prompt
     prompt.md                        # Master prompt and requirements
 ```
@@ -56,7 +57,7 @@ All drivers read thresholds, weights, optimizer settings, device geometry, and w
 
 ### Hardware Constraints (not relaxable)
 Unlike qi_drivers, constraint thresholds in this project are **fixed hardware limits** from the device design (coil-coil clearance, max curvature from bending radius, max coil length from available conductor). They are NOT expressed with relaxation factors — the values in config.yaml are non-negotiable. Always cross-check against `config.yaml` (which is the source of truth); the list below is informational.
-- TF coil current: 100 kA, 20 coils, R0=0.976 m, R1=0.4 m, order=1 (all fixed, not optimized)
+- TF coil current: 80 kA, 20 coils, R0=0.976 m, R1=0.4 m, order=1 (all fixed, not optimized)
 - Maximum banana coil current: 16 kA
 - Banana coils: nfp=5, stellsym, wound on winding surface R0=0.976 m, a=0.215 m, order=2 (order=4 produces bad coils — distinct from curvature p-norm)
 - Target plasma: R0=0.925 m, iota target 0.15, nfp=5, stellsym
@@ -99,7 +100,7 @@ Three modes selectable via `current_mode_stage2` in config.yaml or `BANANA_CURRE
 `CurrentPenaltyWrapper` (in `utils/current_penalty.py`) is the adapter that makes `ScaledCurrent` compatible with `QuadraticPenalty`; shared between stage 2 (penalized mode) and singlestage. The gradient uses `sign(I) * scaled_current.vjp([1.0])` — the `vjp` carries the `ScaledCurrent` scale factor via SIMSOPT's chain rule, so a naive `sign(I)` alone would underweight the gradient by ~10^4.
 
 ### Stage 1 seed: utils/vmec_resize.py preprocessing
-The original `wout_nfp22ginsburg_000_014417_iota15.nc` was sized such that its **s=0.24** flux surface matched the physical plasma boundary at R0=0.925 m; the outer 76% of the volume was auxiliary (see jhalpern30/simsopt STAGE_2/banana_coil_solver.py lines 25-27, 304 for the reference extraction). It was also sized for a stronger TF field than the real hardware (~0.95 T·m rbtor vs. the 100 kA × 20 TF coil set's 0.4 T·m), so the seed |B| was ~2.3× too strong for the actual coils.
+The original `wout_nfp22ginsburg_000_014417_iota15.nc` was sized such that its **s=0.24** flux surface matched the physical plasma boundary at R0=0.925 m; the outer 76% of the volume was auxiliary (see jhalpern30/simsopt STAGE_2/banana_coil_solver.py lines 25-27, 304 for the reference extraction). It was also sized for a stronger TF field than the real hardware (~0.95 T·m rbtor vs. the 80 kA × 20 TF coil set's 0.32 T·m), so the seed |B| was ~3× too strong for the actual coils.
 
 `utils/vmec_resize.py` is a one-time preprocessing step that:
 1. Loads s=0.24 of the original seed and rescales coordinates by `vmec_R / major_radius()`
