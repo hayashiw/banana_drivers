@@ -5,15 +5,18 @@ Stage 2 coil-only optimization for the banana coil stellarator-tokamak hybrid.
 
 Two modes are supported, selected via `stage2_mode` in config.yaml:
 
-  'alm'      — (default) augmented Lagrangian method: f=None with SquaredFlux
-               and all geometric penalties placed in the constraint list. ALM ramps
+  'weighted' — (default) fixed-weight L-BFGS-B on a single scalar objective
+               JF = Jsqf + w_l*Jl + w_cc*Jcc + w_curv*Jcurv. This is the
+               current working default; ALM has not yet been made reliable
+               for the banana-coil constraint landscape.
+
+  'alm'      — augmented Lagrangian method: f=None with SquaredFlux and all
+               geometric penalties placed in the constraint list. ALM ramps
                per-constraint penalty weights in an outer loop and updates
                Lagrange multipliers as constraints are satisfied. Inner loop
                is L-BFGS-B on a smooth augmented Lagrangian, so there are no
                LpCurvCurv-style penalty cliffs for the optimizer to walk into.
-
-  'weighted' — legacy fixed-weight L-BFGS-B on a single scalar objective
-                   JF = Jsqf + w_l*Jl + w_cc*Jcc + w_curv*Jcurv.
+               Experimental for this project — use with care.
 
 Pipeline:  01_stage1 -> 02_stage2 (this) -> 03_singlestage
 
@@ -35,6 +38,7 @@ from scipy.optimize import minimize
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'utils'))
 from output_dir import resolve_output_dir
 from current_penalty import CurrentPenaltyWrapper
+from run_registry import RunRegistry, artifact_path, install_atexit_handler, run_dir
 
 from simsopt._core import load
 from simsopt.geo import (
@@ -69,7 +73,10 @@ TF_NUM = cfg['tf_coils']['num']
 BANANA_CURV_P              = cfg['banana_coils']['curv_p']
 BANANA_CURRENT_MAX         = cfg['banana_coils']['current_max']
 BANANA_CURRENT_SOFT_MAX_S2 = cfg['banana_coils']['current_soft_max_stage2']
-BANANA_CURRENT_FIXED_S2    = float(cfg['banana_coils']['current_fixed_stage2'])
+BANANA_CURRENT_FIXED_S2    = float(os.environ.get(
+    'BANANA_I_FIXED_S2',
+    cfg['banana_coils']['current_fixed_stage2']
+))
 BANANA_CURRENT_CAP         = cfg['banana_coils'].get('current_cap_stage2', True)
 
 # Stage 2 current handling: 'free' | 'penalized' | 'fixed'
@@ -83,20 +90,25 @@ if STAGE2_CURRENT_MODE not in ('free', 'penalized', 'fixed'):
         f"got {STAGE2_CURRENT_MODE!r}"
     )
 
-# Warm-start
-INIT_BSURF_FILE = os.path.abspath(cfg['warm_start']['init_bsurf_filepath'])
+# Hardware engineering tolerances (enforced unmodified by singlestage).
+LENGTH_MAX_HW = float(cfg['thresholds']['length_max'])
+CC_MIN_HW     = float(cfg['thresholds']['coil_coil_min'])
+CURV_MAX_HW   = float(cfg['thresholds']['curvature_max'])
 
-# Objective thresholds (hardware constraints — not relaxable).
-# curvature_max_stage2 is already a stage-2-only softening of the 20 m^-1
-# hardware limit (which is enforced by singlestage). It is exposed here via
-# BANANA_CURV_MAX_S2 for experiments near the curvature cliff — do NOT use
-# this override to relax the actual singlestage/hardware threshold.
-LENGTH_THRESHOLD = cfg['thresholds']['length_max']
-CC_THRESHOLD     = cfg['thresholds']['coil_coil_min']
-CURV_THRESHOLD   = float(os.environ.get(
-    'BANANA_CURV_MAX_S2',
-    cfg['thresholds']['curvature_max_stage2']
-))
+# Stage 2 per-threshold relaxation factors (env var > config > 1.0).
+# Stage 2 only needs coils good enough for singlestage to polish; relaxing
+# its thresholds lets L-BFGS-B drive sqflx lower and shrinks axis drift.
+LENGTH_RELAX = float(os.environ.get(
+    'BANANA_STAGE2_LENGTH_RELAX', cfg['stage2_relaxation']['length']))
+CC_RELAX     = float(os.environ.get(
+    'BANANA_STAGE2_CC_RELAX',     cfg['stage2_relaxation']['coil_coil']))
+CURV_RELAX   = float(os.environ.get(
+    'BANANA_STAGE2_CURV_RELAX',   cfg['stage2_relaxation']['curvature']))
+
+# Effective thresholds seen by the stage 2 objective.
+LENGTH_THRESHOLD = LENGTH_MAX_HW * LENGTH_RELAX
+CC_THRESHOLD     = CC_MIN_HW     / CC_RELAX
+CURV_THRESHOLD   = CURV_MAX_HW   * CURV_RELAX
 
 # Mode selector
 STAGE2_MODE = os.environ.get('BANANA_STAGE2_MODE', cfg.get('stage2_mode', 'alm')).lower()
@@ -157,19 +169,67 @@ GTOL    = float(cfg['stage2_optimizer']['gtol'])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Output directory and atexit handler
+# Output directory, registry registration, and atexit handler
 # ──────────────────────────────────────────────────────────────────────────────
 OUT_DIR = resolve_output_dir()
 
-DIAGNOSTICS_FILE = os.path.join(OUT_DIR, 'stage2_diagnostics.txt')
+# Parent stage 1 run id — hard-required. Reproducibility over ergonomics:
+# the user must pin the parent explicitly in config.yaml (no "latest run"
+# fallback).
+STAGE1_ID = cfg['warm_start'].get('stage1_id')
+if not STAGE1_ID:
+    raise ValueError(
+        "02_stage2: cfg['warm_start']['stage1_id'] is required "
+        "(set to the s01_xxxxxx id of the stage 1 run to warm-start from)."
+    )
+
+_slurm_meta = {
+    "slurm_qos":           os.environ.get("SLURM_JOB_QOS"),
+    "slurm_partition":     os.environ.get("SLURM_JOB_PARTITION"),
+    "slurm_ntasks":        int(os.environ["SLURM_NTASKS"]) if os.environ.get("SLURM_NTASKS") else None,
+    "slurm_cpus_per_task": int(os.environ["SLURM_CPUS_PER_TASK"]) if os.environ.get("SLURM_CPUS_PER_TASK") else None,
+    "slurm_time_limit_s":  None,
+}
+_slurm_job_id = os.environ.get("SLURM_JOB_ID")
+
+# Write env-resolved values back into cfg so content-addressed hashing sees
+# the effective inputs. Pareto sweeps vary these via env vars; without this
+# write-back, runs collide on the same run_id.
+cfg['stage2_mode']                                = STAGE2_MODE
+cfg['stage2_alm']['preset']                       = ALM_PRESET
+cfg['stage2_alm']['tau']                          = ALM_TAU
+cfg['stage2_alm']['maxiter_lag']                  = ALM_MAXITER_LAG
+cfg['stage2_alm']['dof_scale']                    = ALM_DOF_SCALE
+cfg['banana_coils']['current_mode_stage2']        = STAGE2_CURRENT_MODE
+cfg['banana_coils']['current_fixed_stage2']       = BANANA_CURRENT_FIXED_S2
+cfg['stage2_relaxation']['length']                = LENGTH_RELAX
+cfg['stage2_relaxation']['coil_coil']             = CC_RELAX
+cfg['stage2_relaxation']['curvature']             = CURV_RELAX
+
+registry = RunRegistry()
+RUN_ID, _is_new = registry.register_stage2(cfg, stage1_id=STAGE1_ID,
+                                           slurm_meta=_slurm_meta)
+
+RUN_DIR = run_dir("stage2", RUN_ID, OUT_DIR)
+os.makedirs(RUN_DIR, exist_ok=True)
+
+# Warm-start stage 1 bsurf is determined exclusively by the parent stage 1
+# run id. No override: the hashed stage1_id must match the file actually
+# loaded, or content-addressing is a lie.
+INIT_BSURF_FILE = os.path.abspath(
+    artifact_path("stage1", STAGE1_ID, OUT_DIR, "bsurf_opt")
+)
+
+DIAGNOSTICS_FILE = artifact_path("stage2", RUN_ID, OUT_DIR, "diagnostics")
 
 
 def _emit_out_dir_on_exit():
-    """Print output directory path so the shell script can move the log file."""
-    proc0_print(f"OUT_DIR={OUT_DIR}")
+    """Print per-run directory so the shell script can move the log file."""
+    proc0_print(f"OUT_DIR={RUN_DIR}")
 
 
 atexit.register(_emit_out_dir_on_exit)
+install_atexit_handler(registry, "stage2", RUN_ID)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -180,8 +240,11 @@ INPUT PARAMETERS ─────────────────────
     Config:          {_cfg_path}
     Date:            {datetime.now()}
     Mode:            {STAGE2_MODE}
+    Run ID:          {RUN_ID} ({'new' if _is_new else 'rerun'})
+    Run dir:         {RUN_DIR}
 
     Warm-start:
+        stage1_id   = {STAGE1_ID}
         bsurf       = {INIT_BSURF_FILE}
 
     Banana coils:
@@ -192,10 +255,10 @@ INPUT PARAMETERS ─────────────────────
         current_soft_max = {BANANA_CURRENT_SOFT_MAX_S2/1e3:.1f} kA  (used when mode='penalized')
         current_cap_hard = {BANANA_CURRENT_CAP} (L-BFGS-B bound — used only in legacy 'weighted' mode)
 
-    Thresholds:
-        length_max  = {LENGTH_THRESHOLD} m
-        cc_min      = {CC_THRESHOLD} m
-        curv_max    = {CURV_THRESHOLD} m^-1
+    Thresholds (HW tolerance × stage 2 relaxation = effective):
+        length_max  = {LENGTH_MAX_HW} m   × {LENGTH_RELAX} = {LENGTH_THRESHOLD} m
+        cc_min      = {CC_MIN_HW} m       / {CC_RELAX}     = {CC_THRESHOLD} m
+        curv_max    = {CURV_MAX_HW} m^-1  × {CURV_RELAX}   = {CURV_THRESHOLD} m^-1
 """
 if STAGE2_MODE == 'alm':
     _body = f"""    ALM optimizer (preset: {ALM_PRESET}):
@@ -499,6 +562,7 @@ with open(DIAGNOSTICS_FILE, 'w') as f:
 # Run optimization
 # ──────────────────────────────────────────────────────────────────────────────
 proc0_print(f'[{datetime.now()}] Starting stage 2 optimization...')
+registry.mark_running("stage2", RUN_ID, slurm_job_id=_slurm_job_id)
 x0 = JF.x
 
 # L-BFGS-B bounds: optionally cap banana current DOF at BANANA_CURRENT_MAX
@@ -573,6 +637,7 @@ if STAGE2_MODE == 'alm':
     )
 
     success = hit_c_tol
+    stage2_ok = bool(success)
     proc0_print(
         f"""
 [{end_date}] ...optimization complete
@@ -607,7 +672,8 @@ Total runtime: {timedelta(seconds=opt_runtime)}
         'success': bool(success),
         'banana_current_kA': float(banana_current.get_value()/1e3),
     }
-    with open(os.path.join(OUT_DIR, 'stage2_alm_summary.json'), 'w') as f:
+    _alm_summary_path = artifact_path("stage2", RUN_ID, OUT_DIR, "alm_summary")
+    with open(_alm_summary_path, 'w') as f:
         json.dump(summary, f, indent=2)
 else:
     hit_maxiter = res.nit >= MAXITER
@@ -655,6 +721,7 @@ else:
         verdict = 'CONVERGED' if hit_gtol else 'WARNING'
     else:
         verdict = 'BUDGET_EXHAUSTED' if hit_maxiter else 'FAILURE'
+    stage2_ok = verdict in ('CONVERGED', 'BUDGET_EXHAUSTED')
 
     verdict_explanations = {
         'CONVERGED':        'gtol satisfied (rare under truncated regime)',
@@ -719,7 +786,38 @@ FINAL STATE ──────────────────────�
 # Save final outputs
 # ──────────────────────────────────────────────────────────────────────────────
 # Save BoozerSurface (canonical output — contains BiotSavart + Surface)
-boozersurface.save(os.path.join(OUT_DIR, 'stage2_boozersurface_opt.json'))
+_bsurf_out_path = artifact_path("stage2", RUN_ID, OUT_DIR, "bsurf_opt")
+_bsurf_saved = False
+try:
+    boozersurface.save(_bsurf_out_path)
+    _bsurf_saved = True
+except Exception as _e:
+    proc0_print(f'WARNING: BoozerSurface save failed: {_e}')
 
 proc0_print(f'Diagnostics saved to {DIAGNOSTICS_FILE}')
-proc0_print(f'Outputs saved to {OUT_DIR}')
+proc0_print(f'Outputs saved to {RUN_DIR}')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Registry finalization
+# ──────────────────────────────────────────────────────────────────────────────
+_metrics = {
+    "final_sqflx":          float(Jsqf.J()),
+    "final_max_curvature":  float(banana_curve.kappa().max()),
+    "final_max_length":     float(_Jl.J()),
+    "final_min_cc_dist":    float(Jcc.shortest_distance()),
+    "final_min_cs_dist":    None,
+    "final_banana_current": float(banana_current.get_value()),
+    "runtime_s":            float(opt_runtime),
+}
+if _bsurf_saved and stage2_ok:
+    registry.mark_success("stage2", RUN_ID, metrics=_metrics,
+                          slurm_wall_s=float(opt_runtime))
+else:
+    if not _bsurf_saved:
+        _err_code, _err_msg = "file_save_failed", "BoozerSurface save failed"
+    else:
+        _err_code, _err_msg = "solver_diverged", "stage 2 optimizer did not converge"
+    registry.mark_failed("stage2", RUN_ID, error_code=_err_code,
+                         error_message=_err_msg, slurm_wall_s=float(opt_runtime),
+                         metrics=_metrics)

@@ -44,9 +44,14 @@ Flags:
                      trace (afterok dependency) to sanity-check coil-field
                      iota and surface nesting before singlestage. Off by
                      default — stage 2 is submitted alone unless you opt in.
+    warm | cold      Stage 1 only. Overrides stage1.cold_start in config.yaml
+                     via BANANA_SEED=warm|cold. Position-free word (accepted
+                     anywhere in the argument list).
 
 Examples:
     ./submit.sh 01                    # stage 1 VMEC, auto mode (MPI)
+    ./submit.sh 01 warm               # stage 1, warm-start from seed wout
+    ./submit.sh 01 cold 2h            # stage 1, cold near-axis start, 2h
     ./submit.sh 02                    # stage 2 alone
     ./submit.sh 02 --poincare-gate    # stage 2 + post-run Poincare gate
     ./submit.sh 03 regular            # single-stage, regular queue
@@ -103,12 +108,15 @@ esac
 # Strip optional flags from the argument list before positional parsing.
 # Supported flags:
 #   --poincare-gate   opt in to the post-stage-2 Poincare trace gate
+#   warm | cold       stage 1 only: override stage1.cold_start via BANANA_SEED
 POINCARE_GATE=false
+SEED=""
 _ARGS=()
 for _arg in "$@"; do
     case "$_arg" in
         --poincare-gate) POINCARE_GATE=true ;;
-        *) _ARGS+=("$_arg") ;;
+        warm|cold)       SEED="$_arg" ;;
+        *)               _ARGS+=("$_arg") ;;
     esac
 done
 set -- "${_ARGS[@]}"
@@ -244,9 +252,21 @@ else
     MODE="$MODE_ARG"
 fi
 
+# Stage 1 seed override: surfaced as the positional word `warm` or `cold`
+# and plumbed to the driver via BANANA_SEED (see 01_stage1_driver.py).
+if [[ -n "$SEED" ]]; then
+    if [[ "$DRIVER" != "01_stage1" ]]; then
+        echo "Error: seed override ('$SEED') only applies to 01_stage1" >&2
+        exit 1
+    fi
+    EXPORT_VARS="ALL,DRIVER=${DRIVER},BANANA_SEED=${SEED}"
+else
+    EXPORT_VARS="ALL,DRIVER=${DRIVER}"
+fi
+
 # Common sbatch args (driver name passed via --export, overrides via CLI)
 SBATCH_COMMON=(
-    --export="ALL,DRIVER=${DRIVER}"
+    --export="$EXPORT_VARS"
     --job-name="$JOB_NAME"
     --output="${SHORT_NAME}_%j.log"
     --ntasks="$NTASKS"
@@ -255,6 +275,7 @@ SBATCH_COMMON=(
 )
 
 echo "Driver:   $DRIVER"
+[[ -n "$SEED" ]] && echo "Seed:     $SEED (BANANA_SEED)"
 echo "Tasks:    $NTASKS"
 echo "CPUs:     $CPUS"
 if [[ "$MODE" == "custom" ]]; then

@@ -102,8 +102,9 @@ local/
 *.bak
 
 # Slurm output files
-slurm-*.out
-slurm-*.err
+*.out
+*.err
+*.log
 
 # VMEC runtime files (written to cwd by Fortran code)
 fort.*
@@ -118,3 +119,10 @@ threed1.*
 *.csv
 *.ipynb
 *.ipynb_checkpoints
+
+# SQL files
+registry.db*
+
+# VTK files
+*.vtu
+*.vts

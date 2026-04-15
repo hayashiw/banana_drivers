@@ -5,12 +5,12 @@ Initialize coils and plasma surface for the banana coil optimization pipeline.
 
 Builds TF coils (fixed circular) and banana coils (CurveCWSFourier on winding
 surface), loads a VMEC plasma surface, assembles everything into a
-BoozerSurface object, and saves to inputs/stage1_boozersurface_opt.json.
+BoozerSurface object, and saves to a caller-supplied path.
 
-This module provides importable functions for use by 01_stage1_driver.py and
-can also be run as a standalone CLI script:
-
-    python utils/init_boozersurface.py
+The callers are 01_stage1_driver.py (which passes the stage-1 per-run
+artifact path via run_registry.artifact_path) and the CLI mode below (which
+requires BANANA_INIT_OUT and BANANA_INIT_WOUT env vars — no registry coupling
+in CLI mode, since it is used for ad-hoc one-offs and sweep infrastructure).
 """
 import numpy as np
 import os
@@ -147,29 +147,26 @@ def assemble_boozersurface(tf_coils, banana_coils, surface, cfg):
     return boozersurface, biotsavart, coils
 
 
-def build_and_save(cfg, wout_path=None, out_path=None, save_vtk=True,
-                   print_fn=None):
+def build_and_save(cfg, wout_path, out_path, save_vtk=True, print_fn=None):
     """Build coils + surface and save BoozerSurface JSON.
 
     Args:
         cfg: Parsed config.yaml dict.
-        wout_path: Path to wout file. If None, uses cfg['warm_start']['wout_filepath'].
-        out_path: Path to save BoozerSurface JSON. If None, uses
-            cfg['warm_start']['init_bsurf_filepath'].
-        save_vtk: Whether to save VTK files to the output directory.
+        wout_path: Path to the wout file to fit the plasma surface from.
+            Required — callers know which stage-1 run they are building
+            against and must pass its path explicitly.
+        out_path: Path to write BoozerSurface JSON. Required.
+        save_vtk: Write VTK files next to out_path.
         print_fn: Print function (default: _proc0_print).
 
     Returns:
         boozersurface: The assembled BoozerSurface object.
     """
     prt = print_fn or _proc0_print
-
-    # Resolve paths
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if wout_path is None:
-        wout_path = os.path.join(base_dir, cfg['warm_start']['wout_filepath'])
-    if out_path is None:
-        out_path = os.path.join(base_dir, cfg['warm_start']['init_bsurf_filepath'])
+    if not wout_path or not out_path:
+        raise ValueError(
+            "build_and_save: wout_path and out_path are both required"
+        )
 
     # Build components
     prt('Building TF coils...')
@@ -197,9 +194,9 @@ def build_and_save(cfg, wout_path=None, out_path=None, save_vtk=True,
     boozersurface.save(out_path)
     prt(f'BoozerSurface saved to {out_path}')
 
-    # Save VTK
+    # Save VTK next to the JSON so one run's artifacts stay together.
     if save_vtk:
-        vtk_dir = resolve_output_dir()
+        vtk_dir = os.path.dirname(out_path)
         Bbs = biotsavart.B().reshape(surface.gamma().shape)
         Bdotn = np.sum(Bbs * surface.unitnormal(), axis=-1)
         surface.to_vtk(os.path.join(vtk_dir, 'init_surf'),
@@ -223,8 +220,24 @@ if __name__ == '__main__':
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
 
-    wout_path = os.path.join(base_dir, cfg['warm_start']['wout_filepath'])
-    out_path = os.path.join(base_dir, cfg['warm_start']['init_bsurf_filepath'])
+    # Env var overrides for sweep infrastructure
+    if os.environ.get('BANANA_ORDER'):
+        cfg['banana_coils']['order'] = int(os.environ['BANANA_ORDER'])
+
+    # CLI mode is for ad-hoc one-offs and sweep infrastructure. Both paths
+    # must be supplied explicitly via env vars — there is no registry lookup
+    # and no implicit "latest stage 1" fallback.
+    wout_path = os.environ.get('BANANA_INIT_WOUT')
+    out_path  = os.environ.get('BANANA_INIT_OUT')
+    if not wout_path or not out_path:
+        print(
+            "init_boozersurface CLI requires BANANA_INIT_WOUT (stage 1 wout)\n"
+            "and BANANA_INIT_OUT (destination BoozerSurface JSON).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not os.path.isabs(wout_path):
+        wout_path = os.path.join(base_dir, wout_path)
 
     _proc0_print(
         f"""

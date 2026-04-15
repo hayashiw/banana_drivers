@@ -6,39 +6,57 @@
 #   03_singlestage_driver.py (joint coil + surface optimization)
 #   utils/init_boozersurface.py (coil + surface initialization)
 #
-# Hardware constraint thresholds are fixed physical limits from the device
-# design (coil-coil clearance, max curvature from bending radius, max coil
-# length from available conductor).  Unlike qi_drivers, these are NOT
-# expressed with relaxation factors — the values are non-negotiable.
+# Hardware constraint thresholds in `thresholds:` are the true engineering
+# tolerances from the device design (coil-coil clearance, max curvature from
+# bending radius, max coil length from available conductor). Singlestage
+# always enforces these unmodified. Stage 2 applies per-threshold relaxation
+# factors from `stage2_relaxation:` on top — stage 2 only needs coils good
+# enough for singlestage to polish, so loosening its constraints gives
+# L-BFGS-B room to drive squared flux lower. Concrete hardware values will
+# eventually move into utils/hbt_parameters.py; the values here are current
+# placeholders.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Warm-start paths ─────────────────────────────────────────────────────────
-# Input paths are relative to banana_drivers/. Output filenames are resolved
-# against the output directory ($SCRATCH/banana_drivers_outputs/ or ./outputs/).
+# Stage 1 warm-start seed wout (path relative to banana_drivers/). Only consumed
+# when stage1.cold_start=false.
+#
+# Downstream stages identify their parent run by content-addressed registry ID
+# (stage1_id, stage2_id). All per-run outputs live at
+#   $OUT_DIR/<stage>/<id>/<kind>_<id>_<suffix>
+# and are resolved via utils.run_registry.artifact_path(). Leave a parent ID
+# as null to force the driver to hard-error — there is no "latest run"
+# fallback, reproducibility wins over ergonomics.
 warm_start:
-  wout_filepath: "inputs/wout_stage1_seed.nc"                           # resized seed wout (LCFS = target boundary);
-                                                                         # produced by utils/vmec_resize.py from the
-                                                                         # original wout_nfp22ginsburg_000_014417_iota15.nc
-  init_bsurf_filepath: "inputs/stage1_boozersurface_opt.json"           # from 01_stage1
-  stage1_wout_filename: "wout_stage1.nc"                                # from 01_stage1 (resolved against output dir)
-  stage2_bsurf_filename: "stage2_boozersurface_opt.json"                # from 02_stage2 (resolved against output dir)
+  wout_filepath: "inputs/wout_stage1_seed.nc"   # resized seed wout (LCFS = target boundary);
+                                                # produced by utils/vmec_resize.py from
+                                                # wout_nfp22ginsburg_000_014417_iota15.nc
+  stage1_id: null                               # s01_xxxxxx — parent for 02_stage2 + downstream builds
+  stage2_id: null                               # s02_xxxxxx — parent for 03_singlestage
 
 # ── Device geometry ──────────────────────────────────────────────────────────
+# Ground truth: utils/hbt_parameters.py
 device:
   nfp: 5
   stellsym: true
-  major_radius: 0.976     # m (TF coil + winding surface R0)
-  plasma_radius: 0.925    # m (target plasma major radius)
+  major_radius: 0.976     # m (TF coil + winding surface R0; HBT_MAJOR_RADIUS)
+  plasma_radius: 0.92     # m (baseline target LCFS major radius; TARGET_LCFS_MAJOR_R)
+  plasma_minor_radius: 0.15  # m (LCFS shell limit minor radius; TARGET_LCFS_MINOR_R)
 
 # ── TF coils (fixed, not optimized) ─────────────────────────────────────────
+# Ground truth: utils/hbt_parameters.py (TFCOIL_*, TF_RBTOR)
 tf_coils:
-  current: 80.0e+3    # A
+  current: 80.0e+3    # A (derived from B = 0.35 T at R = 0.92 m)
   num: 20
   nfp: 1
   stellsym: false
-  R0: 0.976             # m
-  R1: 0.4               # m
+  R0: 0.976             # m (TFCOIL_MAJOR_R)
+  R1: 0.4               # m (TFCOIL_MINOR_R)
   order: 1
+  # Vacuum toroidal field integral rbtor = mu_0 * N_TF * I_TF / (2*pi).
+  # Device constant — informational here; authoritative value is
+  # utils/hbt_parameters.TF_RBTOR (driver imports from there).
+  rbtor: 0.32           # T*m (20 x 80 kA)
 
 # ── Banana coils ─────────────────────────────────────────────────────────────
 banana_coils:
@@ -76,9 +94,10 @@ banana_coils:
   theta1: 0.1
 
 # ── Winding surface ─────────────────────────────────────────────────────────
+# Ground truth: utils/hbt_parameters.py (WINDSURF_*)
 winding_surface:
-  R0: 0.976       # m (major radius, same as TF)
-  a: 0.215        # m (minor radius)
+  R0: 0.976       # m (WINDSURF_MAJOR_R, same as TF)
+  a: 0.210        # m (WINDSURF_MINOR_R)
 
 # ── Plasma surface (VMEC) ───────────────────────────────────────────────────
 # In the current pipeline, stage 1 warm-starts from a resized seed wout whose
@@ -89,7 +108,7 @@ plasma_surface:
   nphi: 255
   ntheta: 64
   vmec_s: 1.0     # Flux surface label in the stage 1 wout (1.0 = LCFS = target boundary)
-  vmec_R: 0.925   # Target major radius (m)
+  vmec_R: 0.92    # Target major radius (m); matches device.plasma_radius
 
 # ── Stage 1 seed wout preprocessing (utils/vmec_resize.py) ──────────────────
 # One-time preprocessing step: extract the inner_s surface of the original
@@ -115,40 +134,61 @@ stage1_resize:
 
 # ── Stage 1 (VMEC fixed-boundary optimization) ──────────────────────────────
 stage1:
-  cold_start: false                    # true = build boundary from scratch; false = load wout
+  cold_start: true                    # true = near-axis seed via pyQSC; false = warm-start from seed wout
 
-  # Resolution ramp: each entry is one optimization step
-  max_mode_steps: [1, 2, 3]           # Boundary Fourier modes freed at each step
-  vmec_mpol: [3, 4, 5]               # VMEC mpol at each step
-  vmec_ntor: [3, 4, 5]               # VMEC ntor at each step
-  boozer_mpol: [16, 24, 32]          # booz_xform mpol at each step
-  boozer_ntor: [16, 24, 32]          # booz_xform ntor at each step
-  max_nfev: [50, 50, 50]             # Max function evaluations per step
+  # Resolution ramp: each entry is one optimization step.
+  # Step 4 is a *pure radial refinement* — mpol/ntor (both VMEC and booz_xform)
+  # are held fixed at the step-3 values so no new boundary DOFs are opened;
+  # only ns doubles (51 -> 101). This gives a higher-resolution wout for
+  # downstream BoozerLS init without reopening optimizer DOFs and
+  # destabilizing VMEC. Earlier attempts that bumped mpol/ntor at step 4
+  # triggered INITIAL JACOBIAN CHANGED SIGN and ierr=2 (see job 51446519).
+  max_mode_steps: [1, 2, 3, 3]       # Boundary Fourier modes freed at each step
+  vmec_mpol: [3, 4, 5, 5]            # held fixed across step 3 -> 4
+  vmec_ntor: [3, 4, 5, 5]
+  boozer_mpol: [16, 24, 32, 32]
+  boozer_ntor: [16, 24, 32, 32]
+  max_nfev: [50, 50, 50, 15]
+  # Radial grid ramp — driver uses NS_ARRAY[: step+1] per multi-grid step so
+  # the solver climbs to ns=NS_ARRAY[step] on each optimizer eval. Step 4
+  # is the only step that changes ns (51 -> 101). Failure mode #9.
+  ns_array: [13, 25, 51, 101]
 
   # QA target (M=1, N=0)
-  qs_surfaces: [0.25, 0.5, 0.75]     # Flux surfaces for QS targeting
+  # Flux surfaces for QS targeting AND boozmn storage (drives booz_xform
+  # compute_surfs via simsopt Quasisymmetry registration). s=0 is singular
+  # (axis); 0.01 is the closest-to-axis we target. s=1 is the LCFS.
+  qs_surfaces: [0.01, 0.25, 0.5, 0.75, 1.0]
 
   # Physics targets (overridable via BANANA_IOTA, BANANA_VOLUME env vars).
-  # Updated for the resized stage 1 seed (s=0.24 extraction of original wout):
-  #   aspect  = 12.70   — measured from wout_stage1_seed.nc LCFS (anchor)
-  #   volume  = 0.0969  — measured from wout_stage1_seed.nc LCFS (anchor)
-  #   iota    = 0.15    — physics target on iota_edge; seed has iota_edge=0.120
+  # Cold start derives (a, phiedge, helical seed) from (cold_start_R0,
+  # cold_start_volume, iota_target) via utils/near_axis_seed.py; the driver
+  # does not consult aspect_target / volume_target for the boundary shape
+  # (they remain in the objective as post-optimization sanity checks).
   # Only iota_edge is driven by the stage 1 objective — iota_axis is left free
   # so stage 1 can preserve whatever magnetic shear the QA optimization prefers.
   iota_target: 0.15
-  aspect_target: 12.70
-  volume_target: 0.0969               # m^3 (from resized seed wout LCFS)
+  aspect_target: 12.70                # sanity target in the LeastSquares objective
+  volume_target: 0.10                 # m^3 — matches cold_start_volume at the baseline
 
   # Objective weights
+  # weight_mode: 'user' applies weights as-is (absolute residuals);
+  #              'relative' divides each scalar weight by |target| so residuals
+  #              become relative errors. QS target is 0, so qs_weight is always
+  #              applied as-is.
+  weight_mode: relative
   aspect_weight: 1.0
   iota_weight: 1.0
   volume_weight: 1.0
   qs_weight: 1.0
 
-  # Cold start boundary shape (only used when cold_start=true)
-  cold_start_R0: 1.0667              # Major radius (m)
-  cold_start_a: 0.1655               # Minor radius (m)
-  cold_start_phiedge: 0.083          # Total toroidal flux (Wb)
+  # Cold start scan axes (only used when cold_start=true).
+  # User supplies (R0, V, iota); driver derives a = sqrt(V / (2*pi^2*R0)) and
+  # phiedge = pi * rbtor * a^2 / R0 via utils.hbt_parameters.compute_phiedge.
+  # Helical seed boundary + axis guess come from pyQSC near-axis expansion.
+  # Scannable via BANANA_COLD_R0, BANANA_VOLUME, BANANA_IOTA env vars.
+  cold_start_R0: 0.92                 # m (TARGET_LCFS_MAJOR_R baseline)
+  cold_start_volume: 0.10             # m^3 (baseline — a ≈ 0.074 m)
 
 # ── Boozer surface (singlestage) ────────────────────────────────────────────
 boozer:
@@ -161,21 +201,36 @@ targets:
   volume: 0.10      # m^3
   iota: 0.15        # Edge rotational transform
 
-# ── Hardware constraint thresholds ───────────────────────────────────────────
-# These are fixed physical limits.  Do NOT add relaxation factors.
+# ── Hardware constraint thresholds (true engineering tolerances) ────────────
+# Singlestage enforces these unmodified. Stage 2 applies `stage2_relaxation`
+# factors on top. Placeholders until hbt_parameters.py gets the real numbers.
 thresholds:
-  # Stage 2
   length_max: 1.75          # m — max banana coil length
   coil_coil_min: 0.05       # m — min coil-coil clearance
-  curvature_max_stage2: 40  # m^-1 — max curvature (stage 2, looser)
-  # Singlestage
-  coil_surface_min: 0.02    # m — min coil-surface clearance
-  curvature_max_ss: 20      # m^-1 — max curvature (singlestage, tighter)
+  coil_surface_min: 0.02    # m — min coil-surface clearance (singlestage only)
+  curvature_max: 40         # m^-1 — max curvature (from min bending radius)
+
+# ── Stage 2 per-threshold relaxation factors ─────────────────────────────────
+# Stage 2 only needs to produce coils good enough for singlestage to polish.
+# Relaxing stage 2 constraints gives L-BFGS-B room to drive sqflx lower,
+# which shrinks the coil-produced axis drift singlestage has to recover from.
+# Factors >=1 loosen; factor=1 reproduces hardware limits.
+# Env var overrides: BANANA_STAGE2_LENGTH_RELAX, BANANA_STAGE2_CC_RELAX,
+# BANANA_STAGE2_CURV_RELAX.
+stage2_relaxation:
+  length:    1.05  # effective length_max      = length_max      * length
+  coil_coil: 1.05  # effective coil_coil_min   = coil_coil_min   / coil_coil
+  curvature: 1.05  # effective curvature_max   = curvature_max   * curvature
 
 # ── Stage 2 mode selector ────────────────────────────────────────────────────
 # Which stage-2 solver to use:
-#   'alm'      — augmented Lagrangian method (default; constraint list, no cliffs)
-#   'weighted' — legacy fixed-weight L-BFGS-B (single weighted scalar objective)
+#   'weighted' — (default) fixed-weight L-BFGS-B on a scalar objective. Current
+#                working baseline; ALM has not yet been made reliable for this
+#                geometry. See PLAN.md and CLAUDE.md "Stage 2 solver" section.
+#                Per-threshold relaxation applied via `stage2_relaxation`.
+#   'alm'      — augmented Lagrangian method (experimental; constraint list, no
+#                cliffs). Preset knobs in `stage2_alm:` below are only consulted
+#                when this mode is selected.
 stage2_mode: weighted
 
 # ── Stage 2 objective weights (legacy 'weighted' mode) ──────────────────────

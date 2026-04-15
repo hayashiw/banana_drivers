@@ -6,11 +6,24 @@ Banana coil optimization drivers for a stellarator-tokamak hybrid device using S
 
 ## Workflow Pipeline
 
-The optimization runs in stages, each warm-starting from the previous via BoozerSurface JSON:
+The optimization runs in stages, each warm-starting from the previous via a **content-addressed run id** pinned in `config.yaml:warm_start`. Every run lives in its own per-run directory:
 
-1. **01_stage1** — VMEC fixed-boundary optimization (QA target) with resolution ramp → `wout_stage1.nc`, `boozmn_stage1.nc`, `inputs/stage1_boozersurface_opt.json`
-2. **02_stage2** — Load stage 1 BoozerSurface → coil-only optimization (SquaredFlux + penalties) → `outputs/stage2_boozersurface_opt.json`
-3. **03_singlestage** — Load stage 2 BoozerSurface → joint coil + surface optimization (BoozerLS + penalties) → `outputs/singlestage_boozersurface_opt.json`
+```
+$OUT_DIR/
+  stage1/<s01_xxxxxx>/    wout_<id>_opt.nc, boozmn_<id>_opt.nc, bsurf_<id>_opt.json, diagnostics_<id>.csv, ...
+  stage2/<s02_xxxxxx>/    bsurf_<id>_opt.json, alm_summary_<id>.json, diagnostics_<id>.csv, ...
+  singlestage/<s03_xxxxxx>/  bsurf_<id>_opt.json, state_<id>_opt.json, diagnostics_<id>.csv, ...
+```
+
+Run ids are SHA256 hashes over a whitelisted subset of `config.yaml` plus the git commit (see `utils/run_registry.py:STAGE{1,2,SINGLESTAGE}_INPUT_KEYS`). Same inputs + same code → same id; any whitelisted change → new id. Registry is a SQLite database at `$OUT_DIR/registry.db` that tracks lifecycle (`pending → running → success | failed | stale`) and parent/child relationships.
+
+1. **01_stage1** — VMEC fixed-boundary optimization (QA target) with resolution ramp → `stage1/<id>/wout_<id>_opt.nc`, `boozmn_<id>_opt.nc`, `bsurf_<id>_opt.json` (plus `_init` snapshots for pre/post comparison)
+2. **02_stage2** — Reads `warm_start.stage1_id` from config.yaml, loads parent's `bsurf_opt.json` → coil-only optimization (SquaredFlux + penalties) → `stage2/<id>/bsurf_<id>_opt.json`
+3. **03_singlestage** — Reads `warm_start.stage1_id` and `warm_start.stage2_id`, loads stage 2's `bsurf_opt.json` and stage 1's `wout_opt.nc` → joint coil + surface optimization (BoozerLS + penalties) → `singlestage/<id>/bsurf_<id>_opt.json`, `state_<id>_opt.json`
+
+Parent ids are **hard-required**: the drivers raise if `stage1_id` / `stage2_id` are null in config.yaml. No "latest run" fallback — reproducibility over ergonomics.
+
+`inputs/` contains **permanent** inputs only: `wout_stage1_seed.nc` (resized warm-start seed), `vf_biotsavart.json` (VF coil BiotSavart for finite-current cases), `wout_nfp22ginsburg_000_014417_iota15.nc` (original raw seed consumed by `utils/vmec_resize.py`). All per-run artifacts (optimized wouts, boozmns, bsurfs, diagnostics) live in `$OUT_DIR` (`$SCRATCH/banana_drivers_outputs/` by default).
 4. **poincare_tracing** — Field-line tracing with raw surface cross-section overlay
 5. **Pareto scan** — Sweep over banana current, volume, iota targets (not yet implemented)
 6. **Finite-current** — Proxy coil + VF coils for finite plasma current (not yet implemented)
@@ -33,19 +46,33 @@ banana_drivers/
   02_stage2_driver.py                # Stage 2: coil-only optimization (ALM or weighted)
   03_singlestage_driver.py           # Stage 3: joint coil + surface optimization (BoozerLS)
   poincare_tracing.py                # Poincare field-line tracing + raw surface overlay
-  patch_surface_quadpoints.py        # One-shot patcher for legacy half-period BoozerSurface JSON files
   boozxform_driver.py                # Legacy booz_xform surface extraction (superseded by stage 1)
-  inputs/                            # wout seed, stage1_boozersurface_opt.json, vf_biotsavart.json
+  inputs/                            # PERMANENT inputs only: wout_stage1_seed.nc, vf_biotsavart.json, raw seed wout
   outputs/                           # Local fallback only — primary outputs go to $SCRATCH/banana_drivers_outputs/
   utils/
     init_boozersurface.py            # Build TF + banana coils + plasma surface → BoozerSurface (used by stage 1 + CLI)
+    near_axis_seed.py                # pyQSC near-axis expansion seeder for stage 1 cold start (adaptive delta walker)
     vmec_resize.py                   # One-time preprocessing: extract s=0.24 of original seed wout and re-solve VMEC (two-pass, rbtor-matched) to produce wout_stage1_seed.nc
     output_dir.py                    # Resolve output directory ($SCRATCH → ./outputs fallback)
     post_process.py                  # Metrics extraction and CSV comparison
     generate_vf_coils.py             # VF coil generation for finite-current
     hbt_parameters.py                # HBT-EP machine parameters (major radius, winding surface, TF current, target LCFS)
-  local/                             # Legacy files, on-hold drivers, master prompt
+  local/                             # Legacy files, on-hold drivers, diagnostics, master prompt
     prompt.md                        # Master prompt and requirements
+    diag_iota_from_bs.py             # Compute iota from BiotSavart field on VMEC surfaces (contravariant B decomposition)
+    diag_field_decomposition.py      # Visualize B_banana / B_TF on toroidal cross sections
+    diag_iota_basin.py               # One-off BoozerLS iota basin investigation
+    diag_coil_capability.py          # Cold coil capability probe (maximize iota over banana DOFs)
+    iota_basin_analysis.md           # Analysis doc: iota basin problem evidence, diagnostics, resolution
+    new_objectives_plan.md           # Prompt document for new optimization objectives (under review)
+    cold_start_stage1_prompt.md      # Prompt document for cold-start stage 1 implementation
+    example_pyqsc_near_axis.py       # Pedagogical walkthrough of pyQSC near-axis construction
+    sweeps/                          # Sweep infrastructure
+      current_poincare/              # Current Poincaré sweep (stage 2 at 2-16 kA + Poincaré tracing)
+      order_poincare/                # Order Poincaré sweep (stage 2 at order={2,3} + Poincaré tracing)
+      curvmax_stage2/                # Stage 2 curvature-threshold sweep (κ_max ∈ {20,30,40,50,60} m⁻¹)
+      coilcap_R0_current/            # Cold coil-capability probe sweep over (R0, I_banana)
+      stage1_pareto/                 # Stage 1 Pareto scan over (R0, V, iota) via near_axis_seed cold start
 ```
 
 Active output directory is **`$SCRATCH/banana_drivers_outputs/`** (resolved by `utils/output_dir.py`). The in-tree `outputs/` directory is only used as a fallback when `$SCRATCH` is unavailable.
@@ -55,28 +82,35 @@ Active output directory is **`$SCRATCH/banana_drivers_outputs/`** (resolved by `
 ### config.yaml is the single source of truth
 All drivers read thresholds, weights, optimizer settings, device geometry, and warm-start paths from `config.yaml`. Never hardcode these values in driver scripts.
 
-### Hardware Constraints (not relaxable)
-Unlike qi_drivers, constraint thresholds in this project are **fixed hardware limits** from the device design (coil-coil clearance, max curvature from bending radius, max coil length from available conductor). They are NOT expressed with relaxation factors — the values in config.yaml are non-negotiable. Always cross-check against `config.yaml` (which is the source of truth); the list below is informational.
+### Hardware Constraints and stage 2 relaxation
+`config.yaml:thresholds` holds the **true engineering tolerances** from the device design (coil-coil clearance, max curvature from bending radius, max coil length, coil-surface clearance). Singlestage enforces these unmodified. Stage 2 applies per-threshold scaling factors from `config.yaml:stage2_relaxation` on top — stage 2 only needs coils good enough for singlestage to polish, so loosening its constraints gives L-BFGS-B room to drive squared flux lower and shrinks the coil-produced axis drift that singlestage must recover from. Factor=1 reproduces the hardware limit; factor>1 loosens. Concrete hardware values will eventually live in `utils/hbt_parameters.py`; current values in config.yaml are placeholders. Always cross-check against `config.yaml`; the list below is informational.
 - TF coil current: 80 kA, 20 coils, R0=0.976 m, R1=0.4 m, order=1 (all fixed, not optimized)
 - Maximum banana coil current: 16 kA
-- Banana coils: nfp=5, stellsym, wound on winding surface R0=0.976 m, a=0.215 m, order=2 (order=4 produces bad coils — distinct from curvature p-norm)
-- Target plasma: R0=0.925 m, iota target 0.15, nfp=5, stellsym
-- Stage 2 hardware thresholds: `length_max=1.75 m`, `coil_coil_min=0.05 m`, `curvature_max=40 m⁻¹`
-- Singlestage hardware thresholds: `coil_surface_min=0.02 m`, `curvature_max=20 m⁻¹` (tighter)
+- Banana coils: nfp=5, stellsym, wound on winding surface R0=0.976 m, a=0.210 m, order=2 (order=4 produces bad coils — distinct from curvature p-norm)
+- Target plasma: R0=0.92 m (baseline LCFS), iota target 0.15, nfp=5, stellsym
+- Hardware thresholds: `length_max=1.75 m`, `coil_coil_min=0.05 m`, `coil_surface_min=0.02 m`, `curvature_max=40 m⁻¹`
+- Default stage 2 relaxation factors: `length=1.05`, `coil_coil=1.05`, `curvature=1.05` (5% relaxation on all three — 20% was tried in job 51457615 and traded geometry for sqflx without shrinking axis drift)
 
 ### Env var overrides
-Drivers read select parameters from environment variables to support Pareto scans and ad-hoc tuning without editing config.yaml:
+Drivers read select parameters from environment variables to support Pareto scans and ad-hoc tuning without editing config.yaml. **Every driver writes the resolved effective values back into `cfg` in-memory before calling `register_*`**, so content-addressing sees the real inputs and env var variants produce distinct run ids. The mutation is on the in-memory dict only — `config.yaml` on disk is never rewritten, so concurrent sweep jobs don't need a file lock.
 - `BANANA_OUT_DIR` — output directory (default: `$SCRATCH/banana_drivers_outputs/` with `./outputs` fallback)
-- `BANANA_OUTPUT_PREFIX` — file prefix for per-run outputs (default: `stage1` / `singlestage`)
 - `BANANA_IOTA` — stage 1 iota target override (Pareto axis)
 - `BANANA_VOLUME` — stage 1 volume target override (Pareto axis)
-- `BANANA_STAGE2_MODE` — `alm` (default) or `weighted` — select stage 2 solver
+- `BANANA_ASPECT` — stage 1 aspect target override. Combined with `BANANA_VOLUME`, sets $R_{\text{major}} = (V \cdot A^2 / (2\pi^2))^{1/3}$ without adding a new objective term.
+- `BANANA_STAGE2_MODE` — `weighted` (default) or `alm` — select stage 2 solver
 - `BANANA_ALM_PRESET` — `throttled` (default) or `unthrottled` — ALM inner-loop philosophy (see "Stage 2 ALM presets" below)
 - `BANANA_CURRENT_MODE_S2` — `fixed` (default), `penalized`, or `free` — how stage 2 treats the banana current DOF (see "Stage 2 current handling" below)
 - `BANANA_TAU` — stage 2 ALM penalty growth factor override
 - `BANANA_MAXITER_LAG` — stage 2 ALM outer-loop iteration cap override
 - `BANANA_DOF_SCALE` — stage 2 ALM DOF coordinate rescaling (default 0.1 in throttled, None in unthrottled). Rescales DOF space: $y = x / \text{dof\_scale}$. Smaller values make each inner L-BFGS-B step smaller in physical space, but do NOT bound total displacement per outer iteration. Set to `none` to disable.
-- `BANANA_CURV_MAX_S2` — stage 2 curvature threshold override (default 40 m⁻¹). Stage-2-only softening of the 20 m⁻¹ hardware limit enforced by singlestage; use only to give stage 2 more headroom near the curvature cliff
+- `BANANA_STAGE2_LENGTH_RELAX` — stage 2 length relaxation factor override (default from `stage2_relaxation.length`); effective `length_max = length_max_hw * factor`
+- `BANANA_STAGE2_CC_RELAX` — stage 2 coil-coil relaxation factor override (default from `stage2_relaxation.coil_coil`); effective `coil_coil_min = coil_coil_min_hw / factor`
+- `BANANA_STAGE2_CURV_RELAX` — stage 2 curvature relaxation factor override (default from `stage2_relaxation.curvature`); effective `curvature_max = curvature_max_hw * factor`. Singlestage always enforces the unrelaxed hardware limit.
+- `BANANA_I_FIXED_S2` — stage 2 fixed banana current override in Amperes (default: `current_fixed_stage2` from config.yaml, 16000). Only meaningful when `current_mode_stage2='fixed'`. Used by current Poincaré sweep.
+- `BANANA_ORDER` — banana coil Fourier order override (default: `banana_coils.order` from config.yaml, 2). Only affects `utils/init_boozersurface.py` CLI mode. Used by order Poincaré sweep.
+- `BANANA_INIT_OUT` — output path for `utils/init_boozersurface.py` CLI mode (default: `$OUT_DIR/<warm_start.stage1_bsurf_filename>`). Used by order sweep to write per-order init JSON.
+
+Stage 2's warm-start bsurf is **not** env-overridable — it is resolved from `warm_start.stage1_id` so the hashed parent always matches the file actually loaded.
 
 ### Surface Quadpoints Range
 All drivers must use `range="field period"` when creating surfaces for the BoozerSurface. This gives quadpoints_phi in `[0, 1/nfp)` (one full field period). Do NOT use `range="half period"` (gives only half a period — caused a bug where stage 2 JSON contained incorrect surface domains) or `range="full torus"` (unnecessary — SquaredFlux averages over whatever points are given, and stellsym makes one period sufficient).
@@ -118,16 +152,36 @@ Config keys in `stage1_resize`: `seed_wout_filepath`, `output_filepath`, `inner_
 ### Stage 1 objective
 Stage 1 minimizes: `aspect → aspect_target`, `iota_edge → iota_target`, `volume → volume_target`, and quasisymmetry residuals at `qs_surfaces`. **`iota_axis` is NOT in the objective** — it is left free so the optimizer can preserve whatever magnetic shear the QA solution prefers. The success criterion gates only on `iota_edge` error (< 10% of target). Targets in `config.yaml:stage1` are sized for the resized seed, not the original.
 
-### Stage 2 solver: ALM by default
-Stage 2 uses the augmented Lagrangian method (`stage2_mode: alm` in config.yaml). Rationale:
-- `f=None` with all four terms (SquaredFlux, length, coil-coil, curvature) placed in the constraint list — no fixed weights, no penalty cliffs.
-- `SquaredFlux` uses its native `threshold` parameter (ported from PedroGil's simsopt_alm_temp): `J()=0` and `dJ()` returns zero `B_vjp` once `sq_flux < sqf_threshold`. The threshold is a noise floor (~1e-15), not a convergence target. See `fluxobjective.py`.
-- `dof_scale` is a DOF coordinate rescaling ($y = x / \text{dof\_scale}$), NOT a step bound. It makes each inner L-BFGS-B iteration smaller in physical space but does NOT cap total displacement per outer iteration. Total displacement depends on `maxfun` (number of inner function evaluations).
-- Per-constraint $\mu_i$ ramps by `tau` per outer iteration. Lower `tau` is safer for stiff constraint problems (curvature in particular) — see the $\mu$-explosion discussion in PLAN.md.
-- Legacy `weighted` mode (single scalar objective with fixed weights) is still available via `BANANA_STAGE2_MODE=weighted` for comparison runs.
+### Stage 2 solver: weighted by default
+Stage 2 uses the legacy weighted scalar objective (`stage2_mode: weighted` in
+config.yaml). This is the **current working default** because ALM has not
+yet been made reliable for the banana-coil constraint landscape — the
+augmented Lagrangian implementation is in the driver and in the SIMSOPT
+fork, but attempts to use it have not converged to a feasible stationary
+point for this geometry. Treat the weighted run as the reference stage 2
+until that changes.
 
-### Stage 2 ALM presets
-Two presets control the inner-loop philosophy (`stage2_alm.preset` in config.yaml, `BANANA_ALM_PRESET` env var):
+Consequences of running in weighted mode:
+- The objective is a fixed-weight sum (SquaredFlux + length + coil-coil +
+  curvature penalties). L-BFGS-B finds a local minimum of that sum, not a
+  constraint-satisfying solution. Expect non-zero final `sqflx` (typically
+  $10^{-4}$ for this geometry, not the $10^{-15}$ ALM noise floor) and mild
+  hardware-threshold violations (seen in practice: `ccdist` a few percent
+  under `0.05 m`, `max_kappa` a few percent over `40 m⁻¹`). These are
+  accepted trade-offs of the fixed-weight formulation, not bugs.
+- Because the target surface is not actually a flux surface of the final
+  coil field, the coil-produced magnetic axis is **not** anchored to the
+  target plasma centroid and can drift substantially (tens of percent of
+  the minor radius). This axis drift is a structural property of
+  weighted-mode stage 2 and is what singlestage has to recover from.
+
+ALM mode is still available via `BANANA_STAGE2_MODE=alm` for experiments.
+See PLAN.md for the history and current status of the ALM effort.
+
+### Stage 2 ALM presets (only active when stage2_mode=alm)
+Two presets control the ALM inner-loop philosophy (`stage2_alm.preset` in
+config.yaml, `BANANA_ALM_PRESET` env var). These are only consulted when
+`stage2_mode=alm`; they have no effect in the default weighted mode.
 - **`throttled` (default)** — inner loop is step-limited via `dof_scale` (0.1) and `maxfun` cap (100), gentle penalty growth (`tau=2`), many outer iterations (`maxiter_lag=80`). Designed for stiff constraint landscapes where banana coils are near hardware limits. The inner L-BFGS-B under-converges at each penalty level; the outer loop compensates via $\mu/\lambda$ updates.
 - **`unthrottled`** — inner loop runs to full convergence (no `dof_scale`, no `maxfun` cap), aggressive penalty growth (`tau=10`), fewer outer iterations (`maxiter_lag=50`). Matches PedroGil's simsopt_alm_temp examples. Better when constraints are not near cliffs. This is how SIMSOPT's ALM was designed to be used.
 

@@ -9,7 +9,10 @@ post-processing and optionally as a PNG plot with plasma boundary overlay.
 
 The surface overlay uses the raw loaded surface's cross_section() method
 directly — no BoozerSurface solve (which can distort the surface when the
-target volume/iota don't match the actual coil field geometry).
+target volume/iota don't match the actual coil field geometry). The plot
+is rendered by the local helper `_plot_poincare_with_dense_overlay`, which
+samples the overlay at `thetas=1024` to resolve sharp inboard cusps that
+the upstream `simsopt.field.plot_poincare_data` hides at 64 theta points.
 
 Usage:
     # Quick smoke test (coarse grid, good for checking pipeline):
@@ -62,7 +65,6 @@ from simsopt.field import (
     SurfaceClassifier,
     compute_fieldlines,
     particles_to_vtk,
-    plot_poincare_data,
     ToroidalTransitStoppingCriterion,
     MaxRStoppingCriterion, MinRStoppingCriterion,
     MaxZStoppingCriterion, MinZStoppingCriterion,
@@ -234,6 +236,61 @@ def classify_coils(coils, nfp, stellsym):
                f'(nfp={nfp}, stellsym={stellsym}), got {n_banana}')
 
     return result
+
+
+def _plot_poincare_with_dense_overlay(phi_hits, phis, surf, filename,
+                                      dpi=150, ntheta=1024):
+    """Poincare plot with a dense-theta surface overlay.
+
+    Replaces simsopt.field.plot_poincare_data to avoid the 64-theta polyline
+    that hides sharp inboard features on low-aspect QA cross sections. The
+    surface overlay is sampled via surf.cross_section(phi, thetas=ntheta),
+    which evaluates the Fourier series directly on a fine theta grid. All
+    other plot conventions (subplot grid, per-line colormap, phi-plane
+    filtering by integer plane index) match the upstream routine.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    nrowcol = int(np.ceil(np.sqrt(len(phis))))
+    fig, axs = plt.subplots(nrowcol, nrowcol, figsize=(8, 5))
+    axs = np.atleast_2d(axs)
+
+    cmap = plt.cm.tab20
+    for i, phi in enumerate(phis):
+        row, col = i // nrowcol, i % nrowcol
+        ax = axs[row, col]
+        ax.grid(True, linewidth=0.5)
+        ax.set_axisbelow(True)
+
+        for k, h in enumerate(phi_hits):
+            if np.ndim(h) != 2 or h.shape[0] == 0:
+                continue
+            mask = h[:, 1].astype(int) == i
+            pts = h[mask]
+            if pts.size:
+                R_hit = np.sqrt(pts[:, 2]**2 + pts[:, 3]**2)
+                Z_hit = pts[:, 4]
+                ax.scatter(R_hit, Z_hit, s=1.2, alpha=0.7,
+                           color=cmap(k % 20), marker='o')
+
+        cs = surf.cross_section(phi=phi / (2.0 * np.pi), thetas=ntheta)
+        r = np.sqrt(cs[:, 0]**2 + cs[:, 1]**2)
+        z = cs[:, 2]
+        r = np.append(r, r[0]); z = np.append(z, z[0])
+        ax.plot(r, z, 'k-', linewidth=1)
+        ax.set_aspect('equal')
+        ax.set_title(f'$\\phi = {phi / np.pi:.2f}\\pi$')
+        ax.set_xlabel('R'); ax.set_ylabel('Z')
+
+    # blank any unused subplots
+    for j in range(len(phis), nrowcol * nrowcol):
+        axs[j // nrowcol, j % nrowcol].axis('off')
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=dpi)
+    plt.close(fig)
 
 
 def load_field_and_surface(input_path, extend):
@@ -543,8 +600,9 @@ INPUT PARAMETERS ─────────────────────
     if rank == 0 and not args.no_png:
         png_path = os.path.join(out_dir, f'{label}_poincare.png')
         phi_hits_for_plot = [h for h in fieldlines_phi_hits if np.ndim(h) == 2]
-        plot_poincare_data(phi_hits_for_plot, phis, png_path, dpi=150,
-                           surf=surf)
+        _plot_poincare_with_dense_overlay(
+            phi_hits_for_plot, phis, surf, png_path, dpi=150,
+        )
         mprint(f'  Saved: {png_path}')
 
     # ── Save VTK ─────────────────────────────────────────────────────────

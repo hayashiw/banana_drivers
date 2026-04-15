@@ -56,6 +56,7 @@ Run once before stage 1 (from the banana_drivers root):
 """
 
 import os
+import sys
 import shutil
 import numpy as np
 import netCDF4
@@ -63,6 +64,9 @@ import yaml
 
 from simsopt.geo import SurfaceRZFourier
 from simsopt.mhd import Vmec
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hbt_parameters import TF_RBTOR  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Load configuration
@@ -251,10 +255,8 @@ print("VMEC first pass complete.")
 #
 # Target: rbtor_target = mu_0 * N_tf * I_tf / (2*pi) (vacuum toroidal field
 # times major radius for a uniform-current set of planar TF coils).
-tf_N       = int(cfg['tf_coils']['num'])
-tf_I       = float(cfg['tf_coils']['current'])
-MU0        = 4.0e-7 * np.pi
-rbtor_target = MU0 * tf_N * tf_I / (2.0 * np.pi)
+# TF_RBTOR is the device constant from utils/hbt_parameters.py (20 x 80 kA).
+rbtor_target = TF_RBTOR
 
 wout_pass1 = netCDF4.Dataset(vmec.output_file, 'r')
 rbtor_pass1 = float(wout_pass1.variables['rbtor'][:])
@@ -264,6 +266,8 @@ wout_pass1.close()
 phiedge_rescale = rbtor_target / rbtor_pass1
 phiedge_corrected = vmec.indata.phiedge * phiedge_rescale
 
+tf_N = int(cfg['tf_coils']['num'])
+tf_I = float(cfg['tf_coils']['current'])
 print(f"\nPhiedge correction for TF coil match:")
 print(f"  TF coils: {tf_N} x {tf_I/1e3:.1f} kA")
 print(f"  rbtor target (coils):   {rbtor_target:.6e} T*m")

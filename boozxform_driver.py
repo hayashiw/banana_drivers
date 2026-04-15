@@ -75,7 +75,8 @@ VMEC_S = 1.0
 # Physical major radius [m].
 # Used to rescale the Booz_xform coordinates to physical units.
 # For the resized wout this should give scale ≈ 1.0.
-VMEC_R0 = 0.925
+# Source: utils/hbt_parameters.py TARGET_LCFS_MAJOR_R
+VMEC_R0 = 0.92
 
 # Booz_xform Fourier resolution.
 # Must be ≥ singlestage driver's final MPOL to represent all surface features.
