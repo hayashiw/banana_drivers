@@ -57,6 +57,16 @@ banana_drivers/
     post_process.py                  # Metrics extraction and CSV comparison
     generate_vf_coils.py             # VF coil generation for finite-current
     hbt_parameters.py                # HBT-EP machine parameters (major radius, winding surface, TF current, target LCFS)
+  jhalpern30/                        # TEMP top-level (2026-04-14) — in-flight VF×plasma-current scan, scripts, baselines
+                                     # Contains: single_stage_banana_example.py (baseline), scan_vf_plasma_curr/ (4×5 scan grid
+                                     # with SCAN_STATUS.md tracker, stage2/poincare/singlestage driver variants),
+                                     # TF80kA/, biotsavart_opt.json, analyze.ipynb. Only top-level to be git-trackable during
+                                     # Perlmutter 2026-04-15 maintenance; will move back under local/ once re-synced.
+  new_objectives/                    # TEMP top-level (2026-04-14) — CWS-frame poloidal extent + ellipse width objectives
+                                     # (cwsobjectives.py) + new_objectives_plan.md. Reviewed but NOT yet integrated into
+                                     # drivers. Same temporary top-level arrangement as jhalpern30/ — will move back under
+                                     # local/ once integration lands.
+  markdowns/                         # Tracked markdown for prompt docs, iota basin analysis, cold-start prompt, pyQSC walkthrough
   local/                             # Legacy files, on-hold drivers, diagnostics, master prompt
     prompt.md                        # Master prompt and requirements
     diag_iota_from_bs.py             # Compute iota from BiotSavart field on VMEC surfaces (contravariant B decomposition)
@@ -245,6 +255,22 @@ Every driver follows this pattern (must match qi_drivers formatting):
 - Update CLAUDE.md, PLAN.md, and memory as decisions are made
 - The more complicated the code, the more documentation it needs
 - Comments, docstrings, and typehints for complex sections
+
+## Handoff Notes (2026-04-14, for pickup on another machine)
+
+Perlmutter has scheduled maintenance on **2026-04-15** that takes compute nodes offline; login nodes and SLURM submission remain available, but jobs queue until maintenance ends. To keep the working state portable across machines during the outage, the following directories were temporarily promoted from `local/` to the top level of `banana_drivers/` so they can be tracked in git:
+- `jhalpern30/` — in-flight VF × plasma-current scan (`scan_vf_plasma_curr/`), baseline single-stage script, TF80kA audit run, and `analyze.ipynb`. Log files from SLURM runs are still NOT tracked — they live in `$SCRATCH/banana_drivers_outputs/` and under `local/jhalpern30/` for older runs. Plan to find missing logs via job IDs, not file paths.
+- `new_objectives/` — CWS-frame poloidal-extent + ellipse-width objectives (`cwsobjectives.py`) and `new_objectives_plan.md`. Reviewed in an earlier session; not yet wired into any driver.
+
+**Both directories will move back under `local/` once the working state re-syncs post-maintenance.** Do not treat their top-level location as permanent; do not add new infra that depends on them being at the top level.
+
+**What's in flight on SLURM at the time of this writeup** (all under `jhalpern30/scan_vf_plasma_curr/`):
+- Singlestage `51577013` (I=0/VF=0), running from pre-path-move state — unaffected by the directory rearrangement.
+- Singlestage `51579433`–`51579445` (12 pairs, one ID missing in the range) — queued, resubmitted after the `local/jhalpern30` → `jhalpern30/` path move broke the original batch (`51578769`–`51578781`, all failed at `bsurf_init` save with `FileNotFoundError` because the per-point `I*_VF*/` subdirs were accessed via the old path).
+
+When picking up on another machine: clone the repo, check [PLAN.md](PLAN.md) `Current Status (2026-04-14)` and `Current TODOs`, then the scan's own [jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md](jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md) for the per-cell state of the 4×5 grid. Every cell in the SCAN_STATUS job table is labelled with its SLURM job ID; use `sacct -j <id>` or the job log in `$SCRATCH/banana_drivers_outputs/` (or on the old machine, `local/jhalpern30/` for historical singlestage logs) to recover run details.
+
+**Open question to be aware of:** the main `03_singlestage_driver.py` does not currently land in the correct BoozerLS basin on this geometry, while `jhalpern30/scan_vf_plasma_curr/singlestage_banana.py` does. The delta has not been fully pinned down — see [PLAN.md `Open Questions` section](PLAN.md#q1-why-does-jhalpern30scan_vf_plasma_currsinglestage_bananapy-succeed-where-03_singlestage_driverpy-fails) before doing anything that assumes "singlestage now works." Concretely: "singlestage now works" is **only** true for the scan variant, not for the main driver.
 
 ## Environment
 

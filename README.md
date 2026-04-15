@@ -72,6 +72,15 @@ All drivers are submitted via `submit.sh`, which handles SLURM queue selection a
 | `utils/generate_vf_coils.py` | Generate VF coil BiotSavart for finite-current cases → `inputs/vf_biotsavart.json` |
 | `utils/hbt_parameters.py` | HBT-EP machine parameters: major radius, winding surface, TF current, target LCFS geometry |
 
+### Top-level tracked experiment dirs (temporary — 2026-04-14)
+
+These directories were promoted from `local/` to the top level ahead of Perlmutter maintenance on 2026-04-15 so they can be tracked in git. They will move back under `local/` once the working state re-syncs. Do not add new infra that assumes the top-level arrangement is permanent.
+
+| Directory | Purpose |
+|-----------|---------|
+| `jhalpern30/` | In-flight VF × plasma-current 4×5 scan under `scan_vf_plasma_curr/`; per-cell stage-2/Poincaré/singlestage driver variants; baseline `single_stage_banana_example.py`; TF80kA audit; `bananacoils.png` winding-surface projection; `analyze.ipynb`. See `jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md` for the per-cell status table (stage 2, Poincaré, singlestage, and winding-surface projection checks). |
+| `new_objectives/` | CWS-frame poloidal-extent and ellipse-width objectives (`cwsobjectives.py`) + `new_objectives_plan.md`. Reviewed but **not yet** integrated into the drivers. See `PLAN.md` — current roadmap has this as higher priority than before. |
+
 ### On Hold (`local/`)
 
 Legacy files, temp-hold drivers, and the master prompt live in `local/`.

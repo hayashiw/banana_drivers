@@ -126,3 +126,6 @@ registry.db*
 # VTK files
 *.vtu
 *.vts
+
+# log file from banana driver
+log.txt

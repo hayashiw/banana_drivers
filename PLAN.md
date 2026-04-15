@@ -1,10 +1,77 @@
 # Banana Drivers — Plan
 
-Last updated: 2026-04-12 (**Stage 1 cold-start + stage 2 per-threshold relaxation shipped.** `utils/near_axis_seed.py` (pyQSC Landreman-Sengupta, adaptive delta walker + adaptive `_find_r` lower bound) now seeds stage 1 cold start; stage 1 Pareto sweep is running (jobs 51452441 → 51456289). Stage 2 now reads per-threshold relaxation factors from `config.yaml:stage2_relaxation` (default $1.2\times$ on length, coil-coil, curvature) with `BANANA_STAGE2_*_RELAX` env var overrides; hardware thresholds in `config.yaml:thresholds` enforced unmodified by singlestage. Resubmit 51457615 tests whether looser stage 2 shrinks coil-produced axis drift. Stage 1 now also snapshots initial wout/boozmn to the output directory for pre/post optimization comparison plots. Previously: **Iota basin problem definitively resolved.** Current Poincaré sweep (job 51357843) independently confirmed coils produce $\iota\approx 0.15$ at the plasma boundary for 16 kA banana current — the target transform IS achievable. BiotSavart diagnostic (`local/diag_iota_from_bs.py`) gives $\langle\iota\rangle\approx 0.093$ (underestimates due to SquaredFlux surface mismatch). Field decomposition diagnostic (`local/diag_field_decomposition.py`) visualizes $|B_\text{banana}|/|B_\text{TF}|$ on toroidal slices. Coilcap sweep (job 51357795) confirmed 20/20 BoozerLS parameter combinations fail — definitively a solver issue, not a physics problem. Previous Branch A/B analysis revised: coils ARE capable, problem is BoozerLS convergence. Previous: TF coil current corrected 100 → 80 kA in `config.yaml` to match $B=0.35$ T at $R=0.92$ m spec.)
+Last updated: 2026-04-14 (**Roadmap reset ahead of Perlmutter maintenance 2026-04-15.** `jhalpern30/` and `new_objectives/` temporarily promoted to the top level of `banana_drivers/` so they can be tracked in git and pulled to another machine during the compute-node outage; both will move back under `local/` once the working state is re-synced. The 4×5 VF × plasma-current scan in `jhalpern30/scan_vf_plasma_curr/` now has a finite-current stage 2 sweep done (17/20 Poincaré traces OK, see `jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md`) and a large singlestage batch in flight (`51577013` + `51579433`–`51579445`). Crucially, the scan's `singlestage_banana.py` variant is producing physically sensible BoozerLS initializations and making real optimization progress — main drivers (`03_singlestage_driver.py`) still hit the wrong-basin problem, and we have not yet fully identified the driver-level delta that explains the difference (see `Open Questions` below). `new_objectives/` is ready for review-and-integrate but has not yet been wired into any driver; this is now **higher priority** than earlier in the roadmap because it unblocks the hardware-correct stage-2/singlestage re-run. Previously: Stage 1 cold-start + stage 2 per-threshold relaxation shipped. `utils/near_axis_seed.py` (pyQSC Landreman-Sengupta, adaptive delta walker + adaptive `_find_r` lower bound) now seeds stage 1 cold start; stage 1 Pareto sweep is running (jobs 51452441 → 51456289). Stage 2 now reads per-threshold relaxation factors from `config.yaml:stage2_relaxation` (default $1.2\times$ on length, coil-coil, curvature) with `BANANA_STAGE2_*_RELAX` env var overrides; hardware thresholds in `config.yaml:thresholds` enforced unmodified by singlestage. Resubmit 51457615 tests whether looser stage 2 shrinks coil-produced axis drift. Stage 1 now also snapshots initial wout/boozmn to the output directory for pre/post optimization comparison plots. Previously: **Iota basin problem definitively resolved.** Current Poincaré sweep (job 51357843) independently confirmed coils produce $\iota\approx 0.15$ at the plasma boundary for 16 kA banana current — the target transform IS achievable. BiotSavart diagnostic (`local/diag_iota_from_bs.py`) gives $\langle\iota\rangle\approx 0.093$ (underestimates due to SquaredFlux surface mismatch). Field decomposition diagnostic (`local/diag_field_decomposition.py`) visualizes $|B_\text{banana}|/|B_\text{TF}|$ on toroidal slices. Coilcap sweep (job 51357795) confirmed 20/20 BoozerLS parameter combinations fail — definitively a solver issue, not a physics problem. Previous Branch A/B analysis revised: coils ARE capable, problem is BoozerLS convergence. Previous: TF coil current corrected 100 → 80 kA in `config.yaml` to match $B=0.35$ T at $R=0.92$ m spec.)
 
-## Current Status
+## Current Status (2026-04-14)
 
-**Phase: Three-stage pipeline implemented. Iota basin problem resolved — coils produce $\iota\approx 0.15$ at boundary (Poincaré confirmed). BoozerLS solver is the bottleneck, not coil physics. TF current 80 kA (corrected 2026-04-10).**
+**Phase: Finite-current stage 2 scan mostly complete; finite-current singlestage in flight; main drivers still gated on the BoozerLS wrong-basin problem. New objectives reviewed but not integrated. Hardware-correct (80 kA TF, tight constraint) re-evaluation pending.**
+
+The working line of attack right now lives in `jhalpern30/scan_vf_plasma_curr/`:
+- **Stage 2 finite-current sweep** (20 pairs, 4 plasma currents × 5 VF currents): 14/20 produce visually-good banana coils (see winding-surface projection table in [jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md](jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md)). 3/20 are hidden-degenerate collapses (L-BFGS-B returned "converged" but the coils never moved; diagnosed via $L_\text{banana}\in\{0.5, 0.7\}\,\text{m}$ and `Ibanana/Itf = 0.100` = init value). 3/20 are stunted/self-intersecting. Job IDs in the SCAN_STATUS job table.
+- **Poincaré traces** (finite-current, via `jhalpern30/scan_vf_plasma_curr/poincare_simple.py` with `LevelsetStoppingCriterion` torus): 17/20 done, 3/20 pre-stage-2-fail. One pair (`I=-8.0 kA / VF=-3.0 kA`) segfaults reproducibly in `compute_fieldlines` — abandoned after 3 attempts (jobs `51577418`, `51578079`, `51578297`; different nodes, `R_EXCL` $\in\{0.03, 0.02\}$).
+- **Singlestage** (via `jhalpern30/scan_vf_plasma_curr/singlestage_banana.py`, a minimal-diff clone of the baseline `jhalpern30/single_stage_banana_example.py`): `51577013` (I=0/VF=0) running at time of writing; `51579433`–`51579445` queued post-path-fix (12 pairs, one ID missing in range). These use `qos=shared` not `regular`.
+
+**Main-driver singlestage is still blocked.** `03_singlestage_driver.py` reproducibly lands BoozerLS in the iota≈0.002 basin on our pipeline's stage-2 outputs; the scan variant does not. See `Open Questions` below — the delta has not yet been fully nailed down and every claim there is cited to a job ID or file:line.
+
+**Perlmutter maintenance window 2026-04-15:** compute nodes offline; login nodes + SLURM submission still available but jobs queue until maintenance ends. Any work picked up on another machine during that window should go through git (both `jhalpern30/` and `new_objectives/` are temporarily top-level for this reason — they will move back under `local/` once synced).
+
+## Current TODOs (2026-04-14)
+
+This is the active checklist. Older TODOs are preserved verbatim under [Old TODOs](#old-todos-pre-2026-04-14-retained-for-reference) in case something here misses a detail they covered.
+
+Goal: a coil set that simultaneously supports (a) pure-stellarator operation, (b) hybrid tokamak-stellarator operation (finite plasma current + VF), and (c) all hardware constraints (max banana current, max length, coil-coil distance, curvature, coil-surface clearance).
+
+- [ ] **Finish preliminary finite-current stage 2 scan** ([jhalpern30/scan_vf_plasma_curr/](jhalpern30/scan_vf_plasma_curr/)) — 14/20 physically-good stage 2 outputs, 3/20 hidden-degenerate, 3/20 stunted/self-intersecting. Decide per-cell whether to (a) accept, (b) retry with different stage-2 init or relaxed constraints, or (c) drop. Re-run the 3 hidden-degenerate pairs with a length lower-bound or a fresh init.
+- [ ] **Evaluate the finite-current singlestage scan** (once `51577013` + `51579433`–`51579445` land). Per-cell: did BoozerLS initialize in a sane basin, did L-BFGS-B make progress, final iota vs target, final coil geometry vs hardware thresholds, Poincaré gate. Log results back into [jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md](jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md) job table.
+- [ ] **HIGHER PRIORITY: Implement + test new objectives** ([new_objectives/new_objectives_plan.md](new_objectives/new_objectives_plan.md); implementation lives at [new_objectives/cwsobjectives.py](new_objectives/cwsobjectives.py)). Detailed review completed in an earlier session (see the old TODO item 8); fixes identified, not yet applied to the drivers. These are the poloidal-extent and ellipse-width penalties needed to enforce manufacturability. Priority raised because they unblock the hardware-correct stage 2/singlestage re-run: the current stage 2 soft length cap does nothing to prevent the degenerate collapsed-coil mode that's polluting the VF scan.
+- [ ] **Re-evaluate stage 2 with proper hardware limits** (80 kA TF, tight length/CC/curvature, new objectives). Once the new objectives are integrated and the degenerate-collapse failure mode is closed, rerun the 4×5 VF × plasma-current grid from `jhalpern30/scan_vf_plasma_curr/` against `02_stage2_driver.py` (not the bespoke jhalpern30 solver) so that the hardware-correct stage 2 becomes the canonical output.
+- [ ] **Re-evaluate singlestage with proper hardware limits.** Blocked on two things: (i) the hardware-correct stage 2 above, and (ii) resolving the main-driver vs scan-variant BoozerLS delta (see Open Questions). Once both are settled, a proper stage 1 → stage 2 → singlestage pipeline on 80 kA TF with full new-objective constraints becomes the reference run.
+- [ ] **Parameter scan for optimal coil set** — goal is to find the coil configuration closest to meeting (a)+(b)+(c) simultaneously. Axes likely include banana coil Fourier order, current, winding surface geometry, and plasma current / VF pairs from the VF scan. Structure TBD — probably reuses the content-addressed run registry and per-sample `BANANA_OUT_DIR` pattern already in use.
+- [ ] **Validation with Poincaré tracing** for each scan point in (a) and (b). `poincare_tracing.py` handles vacuum; `jhalpern30/scan_vf_plasma_curr/poincare_simple.py` handles finite-current with the exclusion-torus stopping criterion. Both are working. Open question (not blocking): do we also need VMEC equilibrium reconstruction per scan point? For vacuum cases stage 1 already produces a VMEC solution; for finite-current the plasma-current handling is a proxy coil, not a true MHD equilibrium, so VMEC reconstruction would be a separate post-processing step.
+
+## Open Questions
+
+### Q1. Why does `jhalpern30/scan_vf_plasma_curr/singlestage_banana.py` succeed where `03_singlestage_driver.py` fails?
+
+**What we observe.** The scan variant (`jhalpern30/scan_vf_plasma_curr/singlestage_banana.py`, 432 lines) and the baseline (`jhalpern30/single_stage_banana_example.py`, 410 lines, the source of job `51526964` which was the first confirmed working BoozerLS singlestage on this geometry) produce physically sensible BoozerLS initializations on the VF scan's stage-2 outputs. The main driver (`03_singlestage_driver.py`, 707 lines) on analogous inputs consistently lands BoozerLS in the iota≈0.002 basin (pre-2026-04-14 history: jobs `51131288`, `51133658`, `51135157`, `51195002`, `51281515`, `51286237`; diagnostic sweep `51175067` confirmed BoozerLS returns `success=True` with wrong iota regardless of `iota_init`).
+
+**What is verified (file:line citations).** The three drivers differ in three concrete ways that can touch BoozerLS basin selection:
+
+| Aspect | Main driver ([03_singlestage_driver.py](03_singlestage_driver.py)) | Scan variant ([jhalpern30/scan_vf_plasma_curr/singlestage_banana.py](jhalpern30/scan_vf_plasma_curr/singlestage_banana.py)) | Baseline ([jhalpern30/single_stage_banana_example.py](jhalpern30/single_stage_banana_example.py)) |
+|---|---|---|---|
+| BiotSavart source | Attached to stage-2 `BoozerSurface` JSON (`boozersurface_loaded = load(STAGE2_BSURF_FILE); biotsavart = boozersurface_loaded.biotsavart` — line 242–243) | Standalone `biotsavart_opt.json` under the per-cell `I*/VF*/` subdir (`bs = load(f'{OUT_DIR}/biotsavart_opt.json')` — line 301) | Standalone `biotsavart_opt.json` in CWD (same pattern as scan variant) |
+| Target plasma surface seed | Stage-1-optimized VMEC wout LCFS: `SurfaceRZFourier.from_wout(WOUT_FILE, range="field period", nphi=NPHI, ntheta=NTHETA, s=VMEC_S)` (line 233–234); `VMEC_S=1.0` after the 2026-04-09 resize | Original unresized jhalpern30 seed wout at `s=0.24`: `SurfaceRZFourier.from_wout(file_loc, range="half period", nphi=255, ntheta=64, s=0.24)` (line 304) with hardcoded rescale `surf.set_dofs(surf.get_dofs()*0.925/surf.major_radius())` (line 306) | Same as scan variant |
+| Boozer surface resolution class | `SurfaceXYZTensorFourier` fit via `least_squares_fit(gamma)` on the stage-1 surface (line 265–270) | Same class, same `least_squares_fit(surf_prev.gamma())`, but the `surf_prev` is the `s=0.24` rescaled surface above (line 48–53 inside `initialize_boozer_surface`) | Same as scan variant |
+
+Both drivers pass `iota=0.15` as the initial guess to `run_code`: main driver line 283 (`boozersurface.run_code(TARGET_IOTA, G0)` with `TARGET_IOTA = cfg['targets']['iota']`, config.yaml line 118 = 0.15); scan variant line 74 inside `initialize_boozer_surface` (`res = boozer_surface.run_code(iota, G0)` with `iota_target = 0.15` at driver line 261). So the initial `iota` argument is **not** a differentiator.
+
+**What is NOT yet verified.** The leading hypothesis is that the main driver's warm-start surface (stage-1 VMEC LCFS) + stage-2-attached BiotSavart combination has a helical-content mismatch that places BoozerLS in a degenerate basin, while the scan variant's rescaled `s=0.24` slice of the original seed + standalone vacuum BiotSavart lands in the correct basin. This has **not** been directly tested. Concrete ways to test it (any one would falsify or confirm):
+
+1. Run `03_singlestage_driver.py` with the scan variant's `s=0.24 + 0.925` rescaled surface substituted in, same stage-2 BiotSavart. If it lands in the right basin, surface seed is the culprit.
+2. Run `jhalpern30/scan_vf_plasma_curr/singlestage_banana.py` with a stage-2-attached BiotSavart from our pipeline (not a standalone `biotsavart_opt.json`). If it fails, BiotSavart source is the culprit.
+3. Diagnose the non-axisymmetric Fourier content of both warm-start surfaces and the coil field's helical spectrum on each — would quantify any helical-content mismatch without a full optimization run.
+
+**SIMSOPT build history (partial).** PLAN.md previously logged that job `51526964` (baseline success) ran against `hayashiw/simsopt` branch `whjh/auglag_banana` at [hybrid_torus/banana/simsopt/](../simsopt/), and that earlier jobs `51391791` and `51409853` ran essentially the same script against an upstream-simsopt checkout and diverged to iota≈3659 with Newton runaway. That establishes "simsopt build matters for the baseline script," but does **not** explain the main-driver failures: our main drivers also use the fork. The build difference is therefore a known-relevant variable for the jhalpern30 baseline script only; it does not close the main-driver question.
+
+**Referenced job IDs** (all traceable to `jhalpern30/scan_vf_plasma_curr/SCAN_STATUS.md` or PLAN.md experiment log):
+- `51526964` — baseline `single_stage_banana_example.py` success, fork simsopt
+- `51391791`, `51409853` — prior baseline failures, upstream simsopt
+- `51131288`, `51133658`, `51135157`, `51195002`, `51281515`, `51286237` — `03_singlestage_driver.py` wrong-basin failures
+- `51175067` — BoozerLS diagnostic sweep, all `iota_init` converge to 0.002
+- `51577013` — scan variant singlestage, I=0/VF=0, in flight at time of writing
+- `51578769`–`51578781` — scan variant singlestage pre-path-move, failed at `bsurf_init` save due to `FileNotFoundError` (driver-side, not BoozerLS)
+- `51579433`–`51579445` — scan variant singlestage, resubmit post-path-fix, queued at time of writing
+
+**Relevant commits** (from `git log --oneline`):
+- `cd89d8f` — TF 100→80 kA; coil capability probe; hbt_parameters.py
+- `2888783` — stage 2 truncated-budget + Poincaré gate; BoozerLS `constraint_weight` bump 1.0→1.0e3
+- `7ff34ed` — "Document singlestage init failure: SIMSOPT fork is the root cause" (pre-dates the 2026-04-14 finding that the fork is necessary but not sufficient)
+
+**Status.** Leading hypothesis (surface seed + BiotSavart mismatch) not yet tested. Do not treat as resolved. Anything downstream that assumes "singlestage works now" should check against this section first.
+
+
+
+**2026-04-14 — Baseline singlestage succeeds where main drivers fail; simsopt build identified as the leading variable.** Job **51526964** ran `local/jhalpern30/single_stage_banana_example.py` against `local/jhalpern30/biotsavart_opt.json` (a vacuum stage-2 result from the jhalpern30 pipeline) and made real progress: BoozerLS initialized at $\iota \approx 0.054$ (not the $\iota \approx 0.002$ our main drivers see) and L-BFGS-B drove it $0.054 \to 0.14$ over the run. Coils end up overlapping but the optimization is moderately successful. Log: `local/jhalpern30/single_stage_banana_51526964.out`. Crucially, **prior runs of essentially the same script failed**: jobs **51391791** and **51409853** at `/pscratch/sd/h/hayashiw/simsopt-jhalpern30/examples/single_stage_optimization/SINGLE_STAGE/` both diverged in BoozerLS to $\iota \approx 3659$, $\|\nabla\|_\infty \approx 3.956\text{e}{+}13$ (Newton runaway). The **only** difference is the simsopt build: the working run used the `hayashiw/simsopt` fork branch `whjh/auglag_banana` (at `hybrid_torus/banana/simsopt/`); the failing prior runs used the upstream-simsopt copy. User-verified: Fourier order (order=2), CC penalty structure (`CC_WEIGHT=100`, `CC_THRESHOLD=0.05`), and number of Fourier modes are the **same** between baseline and main drivers — earlier speculation that these differed was wrong. The firm differences are the warm-start starting iota (0.054 vs 0.002) and the simsopt build history. This reframes the iota-basin investigation: the main banana_drivers failures may be less about config/weights and more about the simsopt build used for BoozerLS. **Next experiment:** the stage-2 plasma-current scan (`local/jhalpern30/scan_plasma_curr/`) is being extended to singlestage. New driver `scan_plasma_curr/singlestage_banana.py` is a minimal-diff clone of the baseline that (1) loads per-current-subdir `I{kA}kA/biotsavart_opt.json`, (2) drops the proxy plasma-current coil from the BS set, and (3) passes $I = \mu_0 \cdot I_\text{plasma}$ to `BoozerSurface(..., I=...)` using the finite-current API added in the fork. Run/submit wrappers `run_singlestage_banana.sh` and `submit_singlestage_scan.sh` follow the 3×3 chain pattern of the stage-2 submit script, ready to submit.
 
 BoozerLS initialization diagnosed as a **wrong-basin problem** — diagnostic sweep (job 51175067) confirmed BoozerLS converges to iota~0.002 regardless of iota_init (0.15, 0.05, 0.01), with `success=True` and `||grad||=0`. The solver finds a valid least-squares minimum, just the wrong one. No parameter tuning will fix this. However, Poincaré field-line tracing (job 51357843) independently confirmed the coil field DOES produce $\iota\approx 0.15$ at the plasma boundary for 16 kA banana current — the problem is definitively a BoozerLS solver convergence issue, not a coil physics limitation.
 
@@ -249,11 +316,15 @@ Stage 1 output `stage1_boozersurface_opt.json` from job 51259276 is now obsolete
 
 `02_stage2_driver.py` only builds `CurrentPenaltyWrapper`/`Jcurr` when `mode == 'penalized'`; in `fixed` mode the DOF is truly removed so the inner optimizer cannot touch it. `constraint_names` is built dynamically so the termination summary and ALM summary JSON remain consistent. `CurrentPenaltyWrapper` was moved to `utils/current_penalty.py` for sharing with `03_singlestage_driver.py`.
 
-## Immediate Priority: Baseline at Single Resolution
+## Old TODOs (pre-2026-04-14, retained for reference)
+
+The sections below are the pre-2026-04-14 roadmap. They are preserved in case the new [Current TODOs](#current-todos-2026-04-14) section accidentally drops something that was still load-bearing. Treat as historical reference; if anything here conflicts with the current TODOs, the current TODOs win.
+
+### Immediate Priority: Baseline at Single Resolution
 
 **Goal:** Get BoozerLS single-stage optimization to converge at a single reasonable resolution (mpol=ntor=6 or 8) with hardware parameters.
 
-### Steps
+#### Steps
 
 1. [x] **Confirm BoozerLS + tune parameters** — Driver already used BoozerLS (constraint_weight=1.0). Increased to 100.0 (matches SIMSOPT examples), reduced ntor 8→6, relaxed GTOL 1e-6→1e-2, FTOL 1e-15→1e-5.
 2. [x] **Fix CurveCWSFourierCPP pybind11 bindings** — `*_lin` methods existed in C++ but were only registered on base `PySurface`, not subclasses. Added `register_common_surface_methods` for `PySurfaceRZFourier`, `PySurfaceXYZFourier`, `PySurfaceXYZTensorFourier` in `python_surfaces.cpp`.
@@ -270,30 +341,30 @@ Stage 1 output `stage1_boozersurface_opt.json` from job 51259276 is now obsolete
 6. [ ] **Run singlestage end-to-end** — TF current now 80 kA (corrected 2026-04-10). Coils confirmed capable of $\iota=0.15$ via Poincaré. Next: resolve BoozerLS convergence (alternatives: BoozerLS-free iota, lower SquaredFlux, Poincaré-initialized BoozerLS) then stage 1 → stage 2 → singlestage.
 8. [ ] **Establish success criteria** — Boozer residual < 1e-4, both ftol and gtol satisfied, physically reasonable coil geometry.
 
-## Near-Term: Fourier Continuation to 12/12
+### Near-Term: Fourier Continuation to 12/12
 
 Once baseline converges at single resolution:
 
 9. [ ] **Implement Fourier continuation ramp** — Ramp from baseline resolution up to mpol=ntor=12. Use per-level tolerance dictionary (like source's ftol_by_mpol/gtol_by_mpol approach).
 10. [ ] **Validate 12/12 convergence** — Confirm ftol AND gtol convergence at full resolution.
 
-## Medium-Term: Pareto Front
+### Medium-Term: Pareto Front
 
 11. [ ] **Design Pareto scan infrastructure** — Sweep over banana current values (e.g., 4, 8, 12, 16 kA) and possibly volume/iota targets.
 12. [ ] **Sensitivity study** — Determine whether each scan point needs fresh stage 1 → stage 2 initialization or can reuse the baseline.
 13. [x] **Build stage 1 capability** — `01_stage1_driver.py` with warm start (existing wout) and cold start (programmatic boundary) modes. Cold start enables Pareto scans over iota/volume. *(Implementation in progress — see TODO.)*
 14. [ ] **Run Pareto scans** — Produce database of converged solutions. Each scan point runs full pipeline: stage 1 → stage 2 → singlestage.
 
-## Later: Finite Current and Validation
+### Later: Finite Current and Validation
 
 15. [ ] **Finite-current single-stage** — Activate proxy coil + VF coils. Validate convergence.
 16. [x] **Poincare tracing (zero-current)** — Implemented `poincare_tracing.py` with MPI parallelization, `run_poincare.sh`, and `submit.sh poincare` mode. Uses banana example defaults (tol=1e-7, nr=20, nphi=10, degree=3). Proxy coil detection via curve class inspection (CurveCWSFourierCPP vs CurveXYZFourier); exits with error if proxy coil found (finite-current tracing not yet implemented). Current Poincaré sweep infrastructure in `local/sweeps/current_poincare/` (run_sweep.sh + run_poincare_sweep.sh).
 17. [ ] **Poincare tracing (finite-current)** — Add stopping criterion near proxy coil (Biot-Savart 1/r singularity). Requires LevelsetStoppingCriterion or similar.
 18. [ ] **Add SurfaceSurfaceDistance to post_process.py** — Measure actual distance to vacuum vessel (R0=0.976, a=0.222) as a diagnostic-only metric.
 
-## TODO (Next Session)
+### TODO (Next Session)
 
-### Three-stage pipeline implementation (approved plan in progress)
+#### Three-stage pipeline implementation (approved plan in progress)
 - [x] **Create `utils/init_boozersurface.py`** — Refactored from `00_init_driver.py` into importable functions + CLI mode. Functions: `build_tf_coils`, `build_banana_coils`, `load_vmec_surface`, `assemble_boozersurface`, `build_and_save`.
 - [x] **Update `config.yaml`** — Added `stage1` section (resolution ramp, QA targets, cold start params), updated warm_start paths and header for new numbering.
 - [x] **Create `01_stage1_driver.py`** — VMEC fixed-boundary optimization targeting QA (M=1, N=0). Warm start (from existing wout) and cold start (programmatic boundary) modes. Uses `Boozer` + `Quasisymmetry` + `least_squares_mpi_solve` with resolution ramp. Calls `build_and_save` at end to produce `stage1_boozersurface_opt.json`. Env var overrides: `BANANA_IOTA`, `BANANA_VOLUME` for Pareto.
@@ -302,7 +373,7 @@ Once baseline converges at single resolution:
 - [x] **Update `run_driver.sh`** — Add `srun` detection: `if SLURM_NTASKS > 1 then srun python else python`.
 - [x] **Update README.md** — Pipeline table, three-stage workflow, fix SIMSOPT fork reference.
 
-### Other
+#### Other
 - [ ] **Fix submit.sh fallback logic** — Debug-to-regular continuation should cancel the regular job if debug fails or is cancelled, not just on timeout.
 - [ ] **Run full three-stage pipeline** — Validate stage 1 → stage 2 → singlestage end-to-end. Key test: does stage-1-optimized equilibrium help BoozerLS find iota=0.15?
 - [ ] **Port scratch output routing to qi_drivers** — Reference implementation documented in memory.
