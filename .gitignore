@@ -129,3 +129,6 @@ registry.db*
 
 # log file from banana driver
 log.txt
+
+*.png
+*.npz

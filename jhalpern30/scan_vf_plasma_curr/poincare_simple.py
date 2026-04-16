@@ -14,6 +14,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+import re
+
 from scipy.io import netcdf_file
 from simsopt._core import load
 from simsopt.geo import SurfaceRZFourier
@@ -34,48 +36,56 @@ try:
 except ImportError:
     comm, rank, nranks = None, 0, 1
 
+
+VACVES_MAJOR_R = 0.976
+VACVES_MINOR_R = 0.222
+Rmin = VACVES_MAJOR_R - VACVES_MINOR_R
+Rmax = VACVES_MAJOR_R + VACVES_MINOR_R
+Zmin = -VACVES_MINOR_R
+Zmax =  VACVES_MINOR_R
+
+TARGET_LCFS_MAJOR_R = 0.92
+TARGET_LCFS_MINOR_R = 0.15
+
 # ──────────────────────────────────────────────────────────────────────────
 # Scan-point selection (same argparse/env var as banana_coil_solver.py)
 # ──────────────────────────────────────────────────────────────────────────
 _ALLOWED_PLASMA_CURRENTS_KA = [-8.0, -1.0, -0.1, 0.0]
 _ALLOWED_VF_CURRENTS_KA = [-3.0, -1.0, 0.0, 1.0, 3.0]
 _parser = argparse.ArgumentParser()
-_parser.add_argument('--current-kA', type=float,
-                     default=float(os.environ.get('PROXY_CURRENT_KA', '1.0')),
-                     choices=_ALLOWED_PLASMA_CURRENTS_KA)
-_parser.add_argument('--vf-current-kA', type=float,
-                     default=float(os.environ.get('VF_CURRENT_KA', '0.0')),
-                     choices=_ALLOWED_VF_CURRENTS_KA)
+_parser.add_argument('file', default='biotsavart_opt.json')
 _args, _ = _parser.parse_known_args()
-PROXY_CURRENT_KA = _args.current_kA
-VF_CURRENT_KA = _args.vf_current_kA
+file = _args.file
+
+RUN_DIR = os.path.dirname(file)
+PROXY_CURRENT_KA = round(float(re.sub(r"[a-zA-Z]", "", os.path.basename(RUN_DIR).split("_")[0])), 1)
+VF_CURRENT_KA = round(float(re.sub(r"[a-zA-Z]", "", os.path.basename(RUN_DIR).split("_")[1])), 1)
 
 HERE       = os.path.dirname(os.path.abspath(__file__))
-RUN_DIR    = os.path.join(HERE, f'I{PROXY_CURRENT_KA}kA_VF{VF_CURRENT_KA}kA')
-BS_FILE    = os.path.join(RUN_DIR, 'biotsavart_opt.json')
-WOUT_FILE  = os.path.join(HERE, '..', 'wout_nfp22ginsburg_000_014417_iota15.nc')
+# RUN_DIR    = os.path.join(HERE, f'I{PROXY_CURRENT_KA}kA_VF{VF_CURRENT_KA}kA')
 OUT_PREFIX = os.path.join(RUN_DIR, 'poincare')
+WOUT_FILE  = os.path.join(HERE, '..', 'wout_nfp22ginsburg_000_014417_iota15.nc')
 
 NFP      = 5
 VMEC_S   = 0.24
 R0_TGT   = 0.925
 EXTEND   = 0.05
 
-NLINES        = 32
-TMAX          = 3000.0
-TOL           = 1e-7
+NLINES        = 30
+TMAX          = 4000.0
+TOL           = 1e-8
 NPHIS         = 4
 MAX_TRANSITS  = 3000
 NR       = 30
-NPHI     = 20
-NZ       = 15
+NPHI     = 30
+NZ       = NR//2
 DEGREE   = 3
 
 # Exclusion torus around proxy coil: any line entering (R - R_proxy)^2 +
 # (Z - Z_proxy)^2 < R_EXCL^2 is stopped. Keep small enough not to clip the
 # physical plasma volume but large enough that the integrator never lands
 # close to the coil singularity.
-R_EXCL   = 0.01
+R_EXCL   = 0.02
 EXCL_H   = 0.01  # interpolant grid spacing (m)
 EXCL_P   = 2     # interpolant polynomial degree
 
@@ -119,25 +129,23 @@ def build_exclusion_criterion(R_proxy, Z_proxy, rmin, rmax, zmin, zmax):
 
 
 def main():
-    mprint(f'Loading {BS_FILE}')
-    bs = load(BS_FILE)
+    mprint(f'Loading {file}')
+    if 'biotsavart_opt.json' in file:
+        bs = load(file)
 
-    mprint(f'Building surface from {WOUT_FILE} (s={VMEC_S})')
-    surf = SurfaceRZFourier.from_wout(
-        WOUT_FILE, range="half period", nphi=255, ntheta=64, s=VMEC_S,
-    )
-    surf.set_dofs(surf.get_dofs() * R0_TGT / surf.major_radius())
-
-    surf_ext = SurfaceRZFourier.from_wout(
-        WOUT_FILE, range="half period", nphi=255, ntheta=64, s=VMEC_S,
-    )
-    surf_ext.set_dofs(surf_ext.get_dofs() * R0_TGT / surf_ext.major_radius())
-    surf_ext.extend_via_normal(EXTEND)
-
-    gamma = surf_ext.gamma()
-    R = np.sqrt(gamma[..., 0]**2 + gamma[..., 1]**2)
-    Z = gamma[..., 2]
-    Rmin, Rmax, Zmax = float(R.min()), float(R.max()), float(Z.max())
+        mprint(f'Building surface from {WOUT_FILE} (s={VMEC_S})')
+        surf = SurfaceRZFourier.from_wout(
+            WOUT_FILE, range="half period", nphi=255, ntheta=64, s=VMEC_S,
+        )
+        surf.set_dofs(surf.get_dofs() * R0_TGT / surf.major_radius())
+        stage = "stage2"
+    elif 'bsurf_opt.json' in file:
+        bsurf = load(file)
+        surf = bsurf.surface
+        bs = bsurf.biotsavart
+        stage = "singlestage"
+    else:
+        raise Exception(f"Uknown file {file}")
     mprint(f'  Rmin={Rmin:.4f}, Rmax={Rmax:.4f}, Zmax={Zmax:.4f}')
 
     # ── Proxy-coil location (must match banana_coil_solver.py exactly) ────
@@ -186,7 +194,8 @@ def main():
         r_start_min = r_excl_outer
     mprint(f'  start R: [{r_start_min:.4f}, {Rmax:.4f}] '
            f'(r_in={r_in:.4f}, r_out={r_out:.4f})')
-    R_start = np.linspace(r_start_min, Rmax, NLINES)
+    # R_start = np.linspace(r_start_min, Rmax, NLINES)
+    R_start = np.linspace(r_in, TARGET_LCFS_MAJOR_R+TARGET_LCFS_MINOR_R, NLINES)
     Z_start = np.zeros(NLINES)
     phis = [(i / NPHIS) * (2 * np.pi / NFP) for i in range(NPHIS)]
 
@@ -217,11 +226,11 @@ def main():
     arr = np.empty(len(phi_hits), dtype=object)
     for i, h in enumerate(phi_hits):
         arr[i] = np.asarray(h) if np.ndim(h) == 2 else np.empty((0, 5))
-    np.savez(f'{OUT_PREFIX}.npz', phi_hits=arr, phis=np.array(phis),
+    np.savez(f'{OUT_PREFIX}_{stage}.npz', phi_hits=arr, phis=np.array(phis),
              R_starts=R_start, Z_starts=Z_start,
              R_proxy=R_proxy, Z_proxy=Z_proxy, R_excl=R_EXCL,
              current_kA=PROXY_CURRENT_KA)
-    mprint(f'Saved {OUT_PREFIX}.npz')
+    mprint(f'Saved {OUT_PREFIX}_{stage}.npz')
 
     nrc = int(np.ceil(np.sqrt(len(phis))))
     fig, axs = plt.subplots(nrc, nrc, figsize=(8, 6))
@@ -255,8 +264,8 @@ def main():
     for j in range(len(phis), nrc * nrc):
         axs[j // nrc, j % nrc].axis('off')
     plt.tight_layout()
-    plt.savefig(f'{OUT_PREFIX}.png', dpi=150)
-    mprint(f'Saved {OUT_PREFIX}.png')
+    plt.savefig(f'{OUT_PREFIX}_{stage}.png', dpi=150)
+    mprint(f'Saved {OUT_PREFIX}_{stage}.png')
 
 
 if __name__ == '__main__':
