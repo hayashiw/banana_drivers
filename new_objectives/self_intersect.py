@@ -1,5 +1,5 @@
 """
-Self curve-curve distance penalty (``CurveSelfDistance``).
+Self-intersection penalty (``CurveSelfIntersect``).
 
 Motivation
 ----------
@@ -93,17 +93,20 @@ def _self_distance_pure(gamma, gammadash, minimum_distance, mask):
     return 0.5 * jnp.sum(mask * alen * viol) / (gamma.shape[0] ** 2)
 
 
-class CurveSelfDistance(Optimizable):
+class CurveSelfIntersect(Optimizable):
     r"""
-    Penalty that activates when non-neighbouring quadpoints on the
-    same curve come within ``minimum_distance`` of each other.
+    Penalty that steers a curve away from self-intersecting ("figure-8")
+    topology by penalising non-neighbouring quadpoints that come within
+    ``minimum_distance`` of each other.
 
-    This is the self-curve analogue of
-    :class:`simsopt.geo.curveobjectives.CurveCurveDistance`. It is
-    intended to prevent figure-8 / self-intersecting geometry during
-    coil optimisation, especially for higher-order banana coils on a
-    winding surface, where that topology is otherwise caught only
-    post hoc by ``banana_coil_solver.is_self_intersecting``.
+    The implementation mechanism is a self curve-curve distance hinge
+    (the single-curve analogue of
+    :class:`simsopt.geo.curveobjectives.CurveCurveDistance`), but the
+    design intent is self-intersection prevention: the penalty fires
+    well before a true crossing forms, giving the optimiser a smooth
+    gradient pushing distant-in-parameter points apart. Without it,
+    self-intersecting geometry at higher-order banana coils is caught
+    only post hoc by ``banana_coil_solver.is_self_intersecting``.
 
     .. math::
         J = \frac{1}{2 N^2} \sum_{i, j}
