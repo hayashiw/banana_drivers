@@ -84,7 +84,10 @@ banana_coils:
   current_cap_stage2: false     # Legacy: L-BFGS-B hard bound in 'weighted' mode
                                 # only. ALM mode uses current_mode_stage2 above.
   nfp: 5
-  order: 2                 # Fourier order (order=4 produces bad shapes)
+  order: 4                 # Fourier order. order=4 was previously unusable
+                           # because coils self-intersected; the
+                           # CurveSelfIntersect objective in new_objectives/
+                           # now prevents that failure mode.
   nqpts: 128               # Quadrature points on curve
   curv_p: 4                # Curvature Lp-norm exponent (L4 > L2 for banana coils)
   # Initial Fourier coefficients
@@ -205,10 +208,14 @@ targets:
 # Singlestage enforces these unmodified. Stage 2 applies `stage2_relaxation`
 # factors on top. Placeholders until hbt_parameters.py gets the real numbers.
 thresholds:
-  length_max: 1.75          # m — max banana coil length
-  coil_coil_min: 0.05       # m — min coil-coil clearance
-  coil_surface_min: 0.02    # m — min coil-surface clearance (singlestage only)
-  curvature_max: 40         # m^-1 — max curvature (from min bending radius)
+  length_max: 2.0           # m — max banana coil length (soft bound; the real
+                            # poloidal-footprint cap is the CWS-frame
+                            # poloidal_extent objective in new_objectives/)
+  coil_coil_min: 0.05       # m — min coil-coil clearance (HW-verified)
+  coil_surface_min: 0.015   # m — min coil-surface clearance, singlestage only
+                            # (HW-verified)
+  curvature_max: 100        # m^-1 — max curvature (HW-verified: selected
+                            # conductor has min bending radius ~1 cm)
 
 # ── Stage 2 per-threshold relaxation factors ─────────────────────────────────
 # Stage 2 only needs to produce coils good enough for singlestage to polish.

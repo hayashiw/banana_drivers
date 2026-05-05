@@ -25,7 +25,7 @@ Given a closed curve :math:`\\gamma : [0, 1) \\to \\mathbb{R}^3`
 discretised on ``N`` quadpoints, the objective is
 
 .. math::
-    J = \\frac{1}{2 N^2} \\sum_{i, j}
+    J = \\frac{C}{2} \\sum_{i, j}
         M_{ij}\\,
         \\bigl\\lVert \\gamma'_i \\bigr\\rVert\\,
         \\bigl\\lVert \\gamma'_j \\bigr\\rVert\\,
@@ -34,7 +34,14 @@ discretised on ``N`` quadpoints, the objective is
 where :math:`M_{ij} \\in \\{0, 1\\}` is a static index mask that
 zeroes out the diagonal and the quadpoints within ``neighbor_skip``
 steps of it, wrapping periodically. The factor ``1/2`` compensates
-for symmetric double counting.
+for symmetric double counting. The prefactor :math:`C` is selected
+by the ``normalize`` kwarg: ``normalize=True`` sets
+:math:`C = 1/N^2` (quadpoint-count invariant but scales the penalty
+by :math:`1/N^2` at fixed threshold/violation, which at typical
+``N ~ 500`` crushes the term by :math:`\\sim 10^{-6}` relative to
+comparable CurveCurveDistance-style penalties), while the default
+``normalize=False`` uses :math:`C = 1` so the raw pairwise sum is
+returned.
 
 Design notes
 ------------
@@ -61,7 +68,7 @@ from simsopt._core.derivative import derivative_dec
 from simsopt.geo.jit import jit
 
 
-def _self_distance_pure(gamma, gammadash, minimum_distance, mask):
+def _self_distance_pure(gamma, gammadash, minimum_distance, mask, normalize):
     """Self curve-curve distance penalty, JAX-pure.
 
     Parameters
@@ -76,6 +83,11 @@ def _self_distance_pure(gamma, gammadash, minimum_distance, mask):
     mask : (N, N) array of {0, 1}
         Precomputed constant mask zeroing out the diagonal and the
         within-``neighbor_skip`` band (with periodic wrap).
+    normalize : bool
+        When ``True``, divide by :math:`N^2` (quadpoint-count invariant
+        but scales the penalty down by :math:`1/N^2` at fixed
+        threshold/violation). When ``False``, return the raw pairwise
+        sum.
     """
     # Squared pairwise distance. The diagonal is identically 0 in exact
     # arithmetic; jnp.sqrt(0) has an infinite subgradient, and even
@@ -90,7 +102,10 @@ def _self_distance_pure(gamma, gammadash, minimum_distance, mask):
             * jnp.linalg.norm(gammadash, axis=1)[None, :])
     viol = jnp.maximum(minimum_distance - dists, 0.0) ** 2
     # 0.5 removes the symmetric double count.
-    return 0.5 * jnp.sum(mask * alen * viol) / (gamma.shape[0] ** 2)
+    total = 0.5 * jnp.sum(mask * alen * viol)
+    if normalize:
+        return total / (gamma.shape[0] ** 2)
+    return total
 
 
 class CurveSelfIntersect(Optimizable):
@@ -109,14 +124,15 @@ class CurveSelfIntersect(Optimizable):
     only post hoc by ``banana_coil_solver.is_self_intersecting``.
 
     .. math::
-        J = \frac{1}{2 N^2} \sum_{i, j}
+        J = \frac{C}{2} \sum_{i, j}
             M_{ij}\,
             \lVert \gamma'_i \rVert\,
             \lVert \gamma'_j \rVert\,
             \max\!\bigl(d_{\min} - \lVert \gamma_i - \gamma_j \rVert,\; 0\bigr)^2
 
     with :math:`M_{ij}` the periodic neighbour-exclusion mask
-    described below.
+    described below and :math:`C = 1/N^2` when ``normalize=True`` or
+    :math:`C = 1` otherwise.
 
     Parameters
     ----------
@@ -132,6 +148,15 @@ class CurveSelfIntersect(Optimizable):
         each side (wrapping periodically). Must satisfy
         ``0 <= neighbor_skip < N/2``. Default 3 matches
         ``banana_coil_solver.is_self_intersecting``.
+    normalize : bool, optional
+        When ``True``, include the :math:`1/N^2` prefactor, making the
+        penalty magnitude approximately invariant to the quadpoint
+        count but also shrinking it by :math:`1/N^2` relative to the
+        raw pairwise sum. When ``False`` (default), return the raw
+        sum, so the penalty has the same dimensional scaling as other
+        SIMSOPT pairwise distance objectives (e.g.,
+        ``CurveCurveDistance``, whose normalization comes from the
+        integral measure, not an explicit :math:`1/N^2`).
 
     Notes
     -----
@@ -143,10 +168,12 @@ class CurveSelfIntersect(Optimizable):
       meaning.
     """
 
-    def __init__(self, curve, minimum_distance, neighbor_skip=3):
+    def __init__(self, curve, minimum_distance, neighbor_skip=3,
+                 normalize=False):
         self.curve = curve
         self.minimum_distance = minimum_distance
         self.neighbor_skip = neighbor_skip
+        self.normalize = normalize
 
         N = len(curve.quadpoints)
         if not (0 <= neighbor_skip < N // 2):
@@ -162,7 +189,7 @@ class CurveSelfIntersect(Optimizable):
 
         super().__init__(depends_on=[curve])
         self.J_jax = jit(lambda g, gd: _self_distance_pure(
-            g, gd, minimum_distance, self._mask))
+            g, gd, minimum_distance, self._mask, normalize))
         self.dJ_dgamma = jit(lambda g, gd: grad(self.J_jax, argnums=0)(g, gd))
         self.dJ_dgammadash = jit(
             lambda g, gd: grad(self.J_jax, argnums=1)(g, gd))

@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS stage1 (
     last_slurm_job  TEXT,                          -- most recent SLURM job id
 
     -- SLURM request metadata (populated on submit)
-    slurm_qos          TEXT,                       -- 'debug' | 'regular' | ...
+    slurm_qos          TEXT,                       -- 'debug' | 'shared' | ...
     slurm_partition    TEXT,
     slurm_time_limit_s INTEGER,                    -- requested wall seconds
     slurm_ntasks       INTEGER,

@@ -3,14 +3,14 @@
 #
 # Usage:
 #   ./submit.sh 01                       # shorthand for 01_stage1 (auto mode)
-#   ./submit.sh 02_stage2                # auto: try debug (30min), fallback regular
-#   ./submit.sh 03_singlestage regular   # submit directly to regular queue
+#   ./submit.sh 02_stage2                # auto: try debug (30min), fallback shared
+#   ./submit.sh 03_singlestage shared   # submit directly to shared queue
 #   ./submit.sh 03_singlestage debug     # submit only to debug (30min, no fallback)
 #
 #   # Custom walltime (auto-selects QOS based on duration):
-#   ./submit.sh 03 2h                    # singlestage, 2h walltime (regular)
+#   ./submit.sh 03 2h                    # singlestage, 2h walltime (shared)
 #   ./submit.sh 02 30m                   # stage 2, 30min (debug)
-#   ./submit.sh 02 1h30m                 # stage 2, 1h30m (regular)
+#   ./submit.sh 02 1h30m                 # stage 2, 1h30m (shared)
 #
 # Per-driver SLURM settings (walltime, cpus) are defined in the case block below.
 # QOS is controlled here — run_driver.sh / run_poincare.sh do NOT set --qos.
@@ -22,22 +22,22 @@ Usage: ./submit.sh <driver> [mode|walltime] [options...]
        ./submit.sh poincare <input.json> [mode|walltime] [extra args...]
 
 Drivers:
-    01  01_stage1           Stage 1 VMEC QA optimization (2h regular, MPI)
-    02  02_stage2           Stage 2 coil-only optimization (1h regular)
-    03  03_singlestage      Single-stage joint optimization (5h regular)
+    01  01_stage1           Stage 1 VMEC QA optimization (2h shared, MPI)
+    02  02_stage2           Stage 2 coil-only optimization (1h shared)
+    03  03_singlestage      Single-stage joint optimization (5h shared)
 
 Poincare:
     poincare <input.json>   Poincare field-line tracing (32 MPI ranks)
 
 Modes:
-    auto      Try debug (30min), fallback to regular if it fails [default]
+    auto      Try debug (30min), fallback to shared if it fails [default]
     debug     Submit to debug queue only (30min, no fallback)
-    regular   Submit to regular queue only
+    shared   Submit to shared queue only
 
 Custom walltime (auto-selects QOS based on duration):
     HH:MM:SS format:   01:30:00, 00:15:00
     Shorthand format:   30m, 2h, 1h30m, 90m
-    <= 30min → debug QOS;  > 30min → regular QOS
+    <= 30min → debug QOS;  > 30min → shared QOS
 
 Flags:
     --poincare-gate  After a 02_stage2 run, also submit a --quick Poincare
@@ -54,14 +54,14 @@ Examples:
     ./submit.sh 01 cold 2h            # stage 1, cold near-axis start, 2h
     ./submit.sh 02                    # stage 2 alone
     ./submit.sh 02 --poincare-gate    # stage 2 + post-run Poincare gate
-    ./submit.sh 03 regular            # single-stage, regular queue
-    ./submit.sh 03 2h                 # single-stage, 2h walltime (regular)
+    ./submit.sh 03 shared            # single-stage, shared queue
+    ./submit.sh 03 2h                 # single-stage, 2h walltime (shared)
     ./submit.sh 02 30m                # stage 2, 30min (debug)
-    ./submit.sh 02 1h30m              # stage 2, 1h30m (regular)
+    ./submit.sh 02 1h30m              # stage 2, 1h30m (shared)
     ./submit.sh 02_stage2 debug       # stage 2, debug only
     ./submit.sh poincare $SCRATCH/banana_drivers_outputs/stage2_boozersurface_opt.json
     ./submit.sh poincare $SCRATCH/banana_drivers_outputs/stage2_boozersurface_opt.json 15m --quick
-    ./submit.sh poincare $SCRATCH/banana_drivers_outputs/singlestage_boozersurface_opt.json regular --tol 1e-9
+    ./submit.sh poincare $SCRATCH/banana_drivers_outputs/singlestage_boozersurface_opt.json shared --tol 1e-9
 USAGE
     exit "${1:-0}"
 }
@@ -125,7 +125,7 @@ DRIVER="${1:?$(usage 1)}"
 
 # ── Handle Poincare tracing separately ─────────────────────────────────────
 if [[ "$DRIVER" == "poincare" ]]; then
-    POINCARE_INPUT="${2:?Usage: ./submit.sh poincare <input.json> [debug|regular|auto] [extra args...]}"
+    POINCARE_INPUT="${2:?Usage: ./submit.sh poincare <input.json> [debug|shared|auto] [extra args...]}"
     MODE="${3:-auto}"
     # Remaining args passed to poincare_tracing.py
     POINCARE_ARGS="${*:4}"
@@ -147,7 +147,7 @@ if [[ "$DRIVER" == "poincare" ]]; then
         if (( CUSTOM_MINUTES <= 30 )); then
             CUSTOM_QOS="debug"
         else
-            CUSTOM_QOS="regular"
+            CUSTOM_QOS="shared"
         fi
         MODE="custom"
     fi
@@ -168,7 +168,7 @@ if [[ "$DRIVER" == "poincare" ]]; then
     if [[ "$MODE" == "custom" ]]; then
         echo "  Walltime: $CUSTOM_TIME ($CUSTOM_QOS)"
     else
-        echo "  Walltime: $DEBUG_TIME (debug) / $TIME (regular)"
+        echo "  Walltime: $DEBUG_TIME (debug) / $TIME (shared)"
     fi
     echo "  Mode:     $MODE"
     echo "  Args:     $POINCARE_ARGS"
@@ -179,9 +179,9 @@ if [[ "$DRIVER" == "poincare" ]]; then
             JOB_ID=$(sbatch --qos=debug --time="$DEBUG_TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
             echo "Submitted debug job: $JOB_ID"
             ;;
-        regular)
-            JOB_ID=$(sbatch --qos=regular --time="$TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
-            echo "Submitted regular job: $JOB_ID"
+        shared)
+            JOB_ID=$(sbatch --qos=shared --time="$TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
+            echo "Submitted shared job: $JOB_ID"
             ;;
         custom)
             JOB_ID=$(sbatch --qos="$CUSTOM_QOS" --time="$CUSTOM_TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
@@ -190,11 +190,11 @@ if [[ "$DRIVER" == "poincare" ]]; then
         auto)
             DEBUG_JOB=$(sbatch --qos=debug --time="$DEBUG_TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
             echo "Submitted debug job: $DEBUG_JOB"
-            REGULAR_JOB=$(sbatch --qos=regular --time="$TIME" --dependency=afternotok:"$DEBUG_JOB" "${SBATCH_COMMON[@]}" | awk '{print $4}')
-            echo "Submitted regular fallback: $REGULAR_JOB (runs only if $DEBUG_JOB fails)"
+            SHARED_JOB=$(sbatch --qos=shared --time="$TIME" --dependency=afternotok:"$DEBUG_JOB" "${SBATCH_COMMON[@]}" | awk '{print $4}')
+            echo "Submitted shared fallback: $SHARED_JOB (runs only if $DEBUG_JOB fails)"
             ;;
         *)
-            echo "Error: unknown mode '$MODE' (expected: debug, regular, auto, or walltime e.g. 30m/2h/01:30:00)" >&2
+            echo "Error: unknown mode '$MODE' (expected: debug, shared, auto, or walltime e.g. 30m/2h/01:30:00)" >&2
             exit 1
             ;;
     esac
@@ -245,7 +245,7 @@ if [[ -n "$CUSTOM_MINUTES" ]]; then
     if (( CUSTOM_MINUTES <= 30 )); then
         CUSTOM_QOS="debug"
     else
-        CUSTOM_QOS="regular"
+        CUSTOM_QOS="shared"
     fi
     MODE="custom"
 else
@@ -281,7 +281,7 @@ echo "CPUs:     $CPUS"
 if [[ "$MODE" == "custom" ]]; then
     echo "Walltime: $CUSTOM_TIME ($CUSTOM_QOS)"
 else
-    echo "Walltime: $DEBUG_TIME (debug) / $TIME (regular)"
+    echo "Walltime: $DEBUG_TIME (debug) / $TIME (shared)"
 fi
 echo "Mode:     $MODE"
 echo ""
@@ -291,9 +291,9 @@ case "$MODE" in
         JOB_ID=$(sbatch --qos=debug --time="$DEBUG_TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
         echo "Submitted debug job: $JOB_ID"
         ;;
-    regular)
-        JOB_ID=$(sbatch --qos=regular --time="$TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
-        echo "Submitted regular job: $JOB_ID"
+    shared)
+        JOB_ID=$(sbatch --qos=shared --time="$TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
+        echo "Submitted shared job: $JOB_ID"
         ;;
     custom)
         JOB_ID=$(sbatch --qos="$CUSTOM_QOS" --time="$CUSTOM_TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
@@ -302,11 +302,11 @@ case "$MODE" in
     auto)
         DEBUG_JOB=$(sbatch --qos=debug --time="$DEBUG_TIME" "${SBATCH_COMMON[@]}" | awk '{print $4}')
         echo "Submitted debug job: $DEBUG_JOB"
-        REGULAR_JOB=$(sbatch --qos=regular --time="$TIME" --dependency=afternotok:"$DEBUG_JOB" "${SBATCH_COMMON[@]}" | awk '{print $4}')
-        echo "Submitted regular fallback: $REGULAR_JOB (runs only if $DEBUG_JOB fails)"
+        SHARED_JOB=$(sbatch --qos=shared --time="$TIME" --dependency=afternotok:"$DEBUG_JOB" "${SBATCH_COMMON[@]}" | awk '{print $4}')
+        echo "Submitted shared fallback: $SHARED_JOB (runs only if $DEBUG_JOB fails)"
         ;;
     *)
-        echo "Error: unknown mode '$MODE_ARG' (expected: debug, regular, auto, or walltime e.g. 30m/2h/01:30:00)" >&2
+        echo "Error: unknown mode '$MODE_ARG' (expected: debug, shared, auto, or walltime e.g. 30m/2h/01:30:00)" >&2
         exit 1
         ;;
 esac
@@ -341,7 +341,7 @@ if [[ "$DRIVER" == "02_stage2" && "$POINCARE_GATE" == true ]]; then
     echo "  Input: $STAGE2_OUTPUT"
 
     case "$MODE" in
-        debug|regular|custom)
+        debug|shared|custom)
             GATE_JOB=$(sbatch --dependency=afterok:"$JOB_ID" "${GATE_SBATCH_COMMON[@]}" | awk '{print $4}')
             echo "  Submitted gate: $GATE_JOB (afterok:$JOB_ID)"
             ;;
@@ -351,8 +351,8 @@ if [[ "$DRIVER" == "02_stage2" && "$POINCARE_GATE" == true ]]; then
             # killed when its dependency becomes unsatisfiable.
             GATE_DEBUG=$(sbatch --dependency=afterok:"$DEBUG_JOB" "${GATE_SBATCH_COMMON[@]}" | awk '{print $4}')
             echo "  Submitted gate for debug job: $GATE_DEBUG (afterok:$DEBUG_JOB)"
-            GATE_REG=$(sbatch --dependency=afterok:"$REGULAR_JOB" "${GATE_SBATCH_COMMON[@]}" | awk '{print $4}')
-            echo "  Submitted gate for regular job: $GATE_REG (afterok:$REGULAR_JOB)"
+            GATE_SHARED=$(sbatch --dependency=afterok:"$SHARED_JOB" "${GATE_SBATCH_COMMON[@]}" | awk '{print $4}')
+            echo "  Submitted gate for shared job: $GATE_SHARED (afterok:$SHARED_JOB)"
             ;;
     esac
 fi

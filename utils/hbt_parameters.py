@@ -53,10 +53,10 @@ VF_ZS = (
     -0.6505194, -0.6505194, -0.6505194, -0.6505194,
 )
 VF_SIGN_CURR = ( # Sign of current with respect to the CCW toroidal direction
-    1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1,
-   -1, -1, -1, -1,
-   -1, -1, -1, -1,
+     1,  1,  1,  1,  1,  1,
+     1,  1,  1,  1,  1,  1,
+    -1, -1, -1, -1,
+    -1, -1, -1, -1,
 )
 
 def compute_phiedge(rbtor, a, R0):

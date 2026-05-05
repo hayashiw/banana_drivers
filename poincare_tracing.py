@@ -119,10 +119,10 @@ def parse_args():
                    help='Number of field lines (default: SLURM_NTASKS or 16)')
     p.add_argument('--tmax', type=float, default=7000,
                    help='ODE integration time (default: 7000)')
-    p.add_argument('--max-transits', type=int, default=2000,
-                   help='Max toroidal transits per line (default: 2000)')
-    p.add_argument('--tol', type=float, default=1e-7,
-                   help='Adaptive ODE solver tolerance (default: 1e-7)')
+    p.add_argument('--max-transits', type=int, default=3000,
+                   help='Max toroidal transits per line (default: 3000)')
+    p.add_argument('--tol', type=float, default=1e-8,
+                   help='Adaptive ODE solver tolerance (default: 1e-8)')
     p.add_argument('--nphis', type=int, default=4,
                    help='Number of phi cross-section planes (default: 4)')
 
