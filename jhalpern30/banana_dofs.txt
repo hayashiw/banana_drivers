@@ -1,0 +1,11 @@
+# Banana coil CurveCWSFourierCPP DoFs (fractions of 2*pi)
+# Written by plot_init_coil.py; consumed by stage2.py.
+# Format: <name> <value>    (whitespace-separated, # for comments)
+phic(0)    0.06
+thetac(0)  0.5
+phic(1)    -0.0221
+thetac(1)  0.0117
+phis(1)    0.0423
+thetas(1)  0.0795
+phic(2)    0.0053
+thetac(2)  0.0099
