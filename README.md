@@ -1,6 +1,7 @@
 # Banana Drivers
 
 **NOTE: All recent work is being done in the `jhalpern30/` directory**
+
 The top level drivers (`01_stage1_driver.py`, `02_stage2_driver.py`, `03_singlestage_driver.py`) are failing to recover baseline behavior of the example scripts in the `accessibility` branch of the `jhalpern30` SIMSOPT fork.
 As a intermediate solution, new driver scripts built directly off of the `jhalpern30` example are being used as the primary driver scripts.
 These new driver scripts are in `banana_drivers/jhalpern30`.
