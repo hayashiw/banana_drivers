@@ -12,9 +12,11 @@ EASTERN = ZoneInfo("America/New_York")
 from scipy.optimize import minimize
 
 from simsopt.geo import (
+    BoozerSurface,
     CurveLength,
     CurveCurveDistance,
     LpCurveCurvature,
+    Volume,
 )
 from simsopt.objectives import SquaredFlux, QuadraticPenalty
 
@@ -40,7 +42,6 @@ from banana_drivers.objectives.cwsobjectives import (
     PoloidalExtent,
     ProjectedEllipseWidth,
     CurveSelfIntersect,
-    # GlobalRadiusCurvature,
 )
 from banana_drivers.objectives.currentobjectives import ScaledCurrentWrapper
 
@@ -284,7 +285,6 @@ def main(argv=None):
         iter_savefile = os.path.join(args.save_iter_dir, f"{prefix}biotsavart{suffix}_iter{tracker['iter']}.json")
         biotsavart.save(iter_savefile)
     def callback(x):
-        JF.x = x
         tracker["iter"] += 1
         tracker["eval"] = 0
         log_row()
@@ -309,6 +309,19 @@ def main(argv=None):
     savefile = os.path.join(args.output_dir, f"{prefix}biotsavart{suffix}.json")
     biotsavart.save(savefile)
     log(f"Saved BiotSavart → {savefile}")
+
+    if "opt" in suffix:
+        suffix = suffix.replace("opt", "init")
+    else:
+        suffix = "_init" + suffix
+    savefile = os.path.join(args.output_dir, f"{prefix}boozersurface{suffix}.json")
+    label = Volume(surface)
+    targetlabel = surface.volume()
+    boozersurface = BoozerSurface(
+        biotsavart, surface, label, targetlabel, constraint_weight=1e2)
+    boozersurface.save(savefile)
+    log(f"Saved BoozerSurface → {savefile}")
+
     end_time = time.monotonic()
     run_time = timedelta(seconds=end_time - start_time)
     log(f"Total runtime: {run_time}")

@@ -7,7 +7,7 @@ from ..hardware import BANANA_IDX, PROXY_IDX
 
 DEFAULT_CONSTRAINT_WEIGHT = 1e3
 
-from numpy import pi
+from numpy import linspace, pi
 MU0 = pi * 4e-7
 
 def build_boozersurface(
@@ -16,18 +16,32 @@ def build_boozersurface(
     constraint_weight: float = DEFAULT_CONSTRAINT_WEIGHT,
     plasma_current: float = 0.0,
 ) -> BoozerSurface:
-    if isinstance(init_surf, SurfaceXYZTensorFourier):
-        surface = init_surf
-    else:
-        surface = SurfaceXYZTensorFourier(
-            mpol=init_surf.mpol,
-            ntor=init_surf.ntor,
-            nfp=init_surf.nfp,
+    mpol, ntor, nfp = init_surf.mpol, init_surf.ntor, init_surf.nfp
+    surface = SurfaceXYZTensorFourier(
+        mpol=mpol,
+        ntor=ntor,
+        nfp=nfp,
+        stellsym=init_surf.stellsym,
+        quadpoints_phi=init_surf.quadpoints_phi,
+        quadpoints_theta=init_surf.quadpoints_theta,
+    )
+    surface.least_squares_fit(init_surf.gamma())
+
+    use_boozer_exact = (constraint_weight == 0.0) or (constraint_weight is None)
+    if use_boozer_exact:
+        quadpoints_phi = linspace(0, 1/nfp, 2*ntor+1, endpoint=True)
+        quadpoints_theta = linspace(0, 1, 2*mpol+1, endpoint=True)
+        booz_exact_surface = SurfaceXYZTensorFourier(
+            mpol=mpol,
+            ntor=ntor,
+            nfp=nfp,
             stellsym=init_surf.stellsym,
-            quadpoints_phi=init_surf.quadpoints_phi,
-            quadpoints_theta=init_surf.quadpoints_theta,
+            quadpoints_phi=quadpoints_phi,
+            quadpoints_theta=quadpoints_theta,
         )
-        surface.least_squares_fit(init_surf.gamma())
+        booz_exact_surface.x = surface.x.copy()
+        surface = booz_exact_surface
+    
     targetlabel = surface.volume()
 
     label = Volume(surface)
@@ -49,7 +63,6 @@ def load_boozersurface_from_biotsavart(
     init_surface: str | Surface,
     mpol: int | None = None,
     ntor: int | None = None,
-    banana_order: int | None = None,
     constraint_weight: float = DEFAULT_CONSTRAINT_WEIGHT,
 ) -> BoozerSurface:
     if isinstance(init_biotsavart, str):
@@ -69,10 +82,6 @@ def load_boozersurface_from_biotsavart(
     else:
         surface = init_surface
 
-    if banana_order is None:
-        # banana_order = init_biotsavart.coils[BANANA_IDX].curve.order
-        pass
-
     biotsavart = init_biotsavart
     proxy_coil = biotsavart.coils[PROXY_IDX]
     proxy_current = proxy_coil.current.get_value()
@@ -86,7 +95,6 @@ def load_boozersurface_from_file(
     boozersurface: str | BoozerSurface,
     mpol: int | None = None,
     ntor: int | None = None,
-    banana_order: int | None = None,
     constraint_weight: float = DEFAULT_CONSTRAINT_WEIGHT,
 ) -> BoozerSurface:
     if isinstance(boozersurface, str):
@@ -95,6 +103,5 @@ def load_boozersurface_from_file(
     biotsavart = boozersurface.biotsavart
     surface = boozersurface.surface
     return load_boozersurface_from_biotsavart(
-        biotsavart, surface, mpol=mpol, ntor=ntor,
-        banana_order=banana_order, constraint_weight=constraint_weight
+        biotsavart, surface, mpol=mpol, ntor=ntor, constraint_weight=constraint_weight
     )
