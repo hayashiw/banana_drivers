@@ -91,12 +91,8 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Output directories
-outputs*/
-local/
-
-# Shell scripts
-# *.sh
+# Top level local directories
+local*/
 
 # Backup files
 *.bak
@@ -127,8 +123,12 @@ registry.db*
 *.vtu
 *.vts
 
-# log file from banana driver
+# Log file from banana driver
 log.txt
 
+# Local markdown files
+*.local.md
+
+# Analysis output files
 *.png
 *.npz

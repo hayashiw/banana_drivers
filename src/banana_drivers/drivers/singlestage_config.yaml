@@ -1,0 +1,16 @@
+weights:
+  bres: 1.0
+  nonqs: 1.0
+  iota: 1.0
+  volume: 1.0
+  length: 1.0
+  ccdist: 1.0
+  curvature: 1.0
+  poloidal: 1.0
+  width: 1.0
+  selfint: 1.0
+
+targets:
+  poloidal: 70 # max, degrees
+  width: 0.17 # max, meters
+  selfint: 0.01 # min, unitless

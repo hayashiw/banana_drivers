@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "banana_drivers"
+version = "0.1.0"
+description = "Banana coil optimization drivers for the HBT-EP stellarator-tokamak hybrid"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pyyaml",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+banana_drivers = ["inputs/*", "drivers/*.yaml"]
+
+[project.scripts]
+banana-generate-biotsavart = "banana_drivers.scripts.generate_biotsavart:main"
+banana-stage2 = "banana_drivers.drivers.stage2:main"
+# banana-singlestage = "banana_drivers.drivers.singlestage:main"
+banana-plot-modB-Bdotn = "banana_drivers.scripts.plot_modB_Bdotn:main"
+banana-generate-default-surface = "banana_drivers.scripts.generate_default_surface:main"
+banana-initialize-boozersurface = "banana_drivers.scripts.initialize_boozersurface:main"
+banana-print-coil-currents = "banana_drivers.scripts.print_coil_currents:main"
+banana-flip-surfacerzfourier = "banana_drivers.scripts.flip_surfacerzfourier:main"
+banana-run-virtual-casing = "banana_drivers.scripts.run_virtual_casing:main"
+banana-add-proxy-and-vf-coils = "banana_drivers.scripts.add_proxy_and_vf_coils:main"
+banana-print-banana-coil-parameters = "banana_drivers.scripts.print_banana_coil_parameters:main"
