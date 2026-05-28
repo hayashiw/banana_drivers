@@ -29,6 +29,14 @@ class BananaWindingSurface:
     stellsym: bool = True
 
 @dataclass(frozen=True)
+class BananaCoilFiniteBuild:
+    offset_from_horizontal: float = 0.00231 # meters = 2.31 mm
+    offset_from_vertical: float = 0.00135 # meters = 1.35 mm
+    horizontal_spacing: float = 0.00531 # meters = 5.31 mm
+    numfilaments_n: int = 2
+    numfilaments_b: int = 7
+
+@dataclass(frozen=True)
 class HardwareLimits:
     tf_current_ka_limits: tuple[float, float] = (-80.0, 0.0) # kiloAmperes
     banana_current_ka_limits: tuple[float, float] = (0.0, 16.0) # kiloAmperes
@@ -72,6 +80,7 @@ hbt_vv          = HBTVacuumVessel()
 hbt_shell       = HBTShell()
 hbt_tf          = HBTTFCoils()
 hbt_banana_ws   = BananaWindingSurface()
+hbt_banana_fb   = BananaCoilFiniteBuild()
 hbt_vf          = HBTVFCoils()
 hardware_limits = HardwareLimits()
 
