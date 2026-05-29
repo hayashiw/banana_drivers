@@ -74,6 +74,8 @@ def build_parser():
                         help="Frequency to save iteration data. Default: 1.")
     parser.add_argument("--vcasing-file", type=str, default=None,
                         help="Virtual casing netCDF file.")
+    parser.add_argument("--max-curvature-override", type=float, default=None,
+                        help="Override the maximum curvature for the banana coils. Default: None.")
     return parser
 
 def load_config(path):
@@ -106,7 +108,10 @@ def build_objective(biotsavart, surface, config, log, args=None):
     if use_min_length:
         Jlmin = QuadraticPenalty(clen, hardware_limits.max_length/2, "min")
     Jccd  = CurveCurveDistance(banana_curves, hardware_limits.min_ccdist)
-    Jcurv = LpCurveCurvature(banana_curve, hardware_limits.banana_curv_p, hardware_limits.max_curvature)
+
+    override_max_curvature = args.max_curvature_override is not None
+    max_curvature = args.max_curvature_override if override_max_curvature else hardware_limits.max_curvature
+    Jcurv = LpCurveCurvature(banana_curve, hardware_limits.banana_curv_p, max_curvature)
 
     max_pol = config["targets"]["poloidal"] * np.pi / 180
     max_width = config["targets"]["width_max"]
