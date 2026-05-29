@@ -18,12 +18,15 @@ dependencies = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-banana_drivers = ["inputs/*", "drivers/*.yaml"]
+banana_drivers = ["inputs/*", "drivers/*.yaml", "scripts/*.sh"]
 
 [project.scripts]
 banana-generate-biotsavart = "banana_drivers.scripts.generate_biotsavart:main"
 banana-stage2 = "banana_drivers.drivers.stage2:main"
-# banana-singlestage = "banana_drivers.drivers.singlestage:main"
+banana-stage2-finitebuild = "banana_drivers.drivers.stage2_finitebuild:main"
+banana-singlestage = "banana_drivers.drivers.singlestage:main"
+banana-singlestage-multithread = "banana_drivers.scripts.singlestage_multithread:main"
+banana-singlestage-multithread-openblas = "banana_drivers.scripts.singlestage_multithread_openblas:main"
 banana-plot-modB-Bdotn = "banana_drivers.scripts.plot_modB_Bdotn:main"
 banana-generate-default-surface = "banana_drivers.scripts.generate_default_surface:main"
 banana-initialize-boozersurface = "banana_drivers.scripts.initialize_boozersurface:main"
