@@ -1,14 +1,14 @@
 weights:
   nonqs: 1.0
-  bres: 1.0
-  iota: 1.0
-  length: 2e-3
-  ccdist: 1e6
+  bres: 1e3
+  iota: 1e4
+  length: 5e-2
+  ccdist: 1e4
   csdist: 1e2
   curvature: 1e-2
   poloidal: 1e2
-  width: 1e1
-  selfint: 1e1
+  width: 1e2
+  selfint: 1e2
   currents: 1e6
 
 targets:
