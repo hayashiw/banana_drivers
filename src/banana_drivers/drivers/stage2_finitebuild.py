@@ -119,7 +119,8 @@ def build_objective(init_biotsavart, surface, config, log, args=None):
     base_curves_finite_build = sum([
         create_cws_multifilament_grid(
             c, hbt_banana_ws.major_radius, hbt_banana_fb.numfilaments_n, hbt_banana_fb.numfilaments_b, 
-            hbt_banana_fb.offset_from_horizontal, hbt_banana_fb.offset_from_vertical, hbt_banana_fb.horizontal_spacing)
+            hbt_banana_fb.offset_from_horizontal, hbt_banana_fb.offset_from_vertical, hbt_banana_fb.horizontal_spacing,
+            rotation_order=0)
         for c in base_curves], [])
     base_currents_finite_build = sum([[c]*nfil for c in base_currents], [])
 

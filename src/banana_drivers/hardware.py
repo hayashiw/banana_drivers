@@ -86,11 +86,13 @@ hardware_limits = HardwareLimits()
 
 N_TF       = hbt_tf.n_coils
 N_BANANA   = 2 * hbt_banana_ws.nfp
+N_PROXY    = 1
+N_VF       = len(hbt_vf.rs)
 TF_IDX     = 0
 BANANA_IDX = N_TF
 PROXY_IDX  = N_TF + N_BANANA
-VF_IDX     = N_TF + N_BANANA + 1
-N_COILS    = VF_IDX + len(hbt_vf.rs)
+VF_IDX     = N_TF + N_BANANA + N_PROXY
+N_COILS    = VF_IDX + N_VF
 
 # Default values but not hardware constraints
 DEFAULT_BANANA_ORDER = 3
