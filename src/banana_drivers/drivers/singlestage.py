@@ -1,7 +1,8 @@
 import argparse
 import glob
-import os
 import numpy as np
+import os
+import re
 import time
 import yaml
 
@@ -36,7 +37,7 @@ from banana_drivers.utils.cli import (
     common_parser,
     resolve_output_tag,
 )
-from banana_drivers.utils.io import DriverLog
+from banana_drivers.utils.io import DriverLog, stdout_to_log
 from banana_drivers.objectives.cwsobjectives import (
     PoloidalExtent,
     ProjectedEllipseWidth,
@@ -44,6 +45,19 @@ from banana_drivers.objectives.cwsobjectives import (
 )
 from banana_drivers.objectives.currentobjectives import ScaledCurrentWrapper
 from banana_drivers.utils.boozersurface import load_boozersurface_from_file, MU0
+
+BFGS_PAT   = re.compile(r"\b(?:L-BFGS-B|BFGS|LBFGS) solve - .*\biter=(\d+)")
+NEWTON_PAT = re.compile(r"\bNEWTON solve - .*\biter=(\d+)")
+
+def make_solver_iter_tap(solver_iters):
+    def tap(line):
+        m = BFGS_PAT.search(line)
+        if m and "bfgs_nit" in solver_iters:
+            solver_iters["bfgs_nit"] = int(m.group(1))
+        m = NEWTON_PAT.search(line)
+        if m and "newton_nit" in solver_iters:
+            solver_iters["newton_nit"] = int(m.group(1))
+    return tap
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -96,8 +110,8 @@ def build_objective(boozersurface, config, log, iota_target, args=None):
 
     Jnonqs = NonQuasiSymmetricRatio(boozersurface, biotsavart)
     constraint_weight = boozersurface.constraint_weight
-    use_boozerLS = constraint_weight is not None
-    if use_boozerLS:
+    use_boozer_ls = constraint_weight is not None
+    if use_boozer_ls:
         Jbres = BoozerResidual(boozersurface, biotsavart)
     iotas = Iotas(boozersurface)
     Jiota = QuadraticPenalty(iotas, iota_target)
@@ -166,7 +180,7 @@ def build_objective(boozersurface, config, log, iota_target, args=None):
         weight_pol * Jpol,
         weight_self * Jself,
     ]
-    if use_boozerLS: JF_list.append(weight_bres * Jbres)
+    if use_boozer_ls: JF_list.append(weight_bres * Jbres)
     if use_min_length: JF_list.append(weight_len * Jlmin)
     if use_width: JF_list.append(weight_width * (Jwmax + Jwmin))
     if use_current: JF_list.append(weight_curr * (Jtfcurrmax + Jbananacurrmax))
@@ -202,7 +216,7 @@ def build_objective(boozersurface, config, log, iota_target, args=None):
         Bdotn_norm_max = get_Bdotn_norm_max,
         J_non_quasisymmetric_ratio = Jnonqs.J,
     )
-    if use_boozerLS: objectives["J_boozer_residual"] = Jbres.J
+    if use_boozer_ls: objectives["J_boozer_residual"] = Jbres.J
     objectives.update(dict(
         J_iota = Jiota.J,
         iota = get_iota,
@@ -268,7 +282,7 @@ def main(argv=None):
 
     config = load_config(args.config)
     os.makedirs(args.output_dir, exist_ok=True)
-    logfile = os.path.join(args.output_dir, f"{prefix}log{suffix}.txt")
+    logfile = os.path.join(args.output_dir, f"{prefix}log_singlestage{suffix}.txt")
     log = DriverLog(logfile)
     log(f"Log file → {logfile}")
     start_time = time.monotonic()
@@ -281,13 +295,24 @@ def main(argv=None):
 
     constraint_weight = args.constraint_weight
     if constraint_weight == 0: constraint_weight = None
+    use_boozer_ls = constraint_weight is not None
     boozersurface = load_boozersurface_from_file(
         args.boozersurface_file, constraint_weight=constraint_weight)
-    
+
+    if use_boozer_ls:
+        solver_iters = dict(bfgs_nit=0, newton_nit=0)
+    else:
+        solver_iters = dict(newton_nit=0)
+    tap = make_solver_iter_tap(solver_iters)
+    log("Initial Boozer solve:")
     tf_coils = boozersurface.biotsavart.coils[TF_IDX:TF_IDX+N_TF]
     tf_curr_tot = sum(abs(coil.current.get_value()) for coil in tf_coils)
     init_G = args.sign_g * tf_curr_tot * MU0
-    res = boozersurface.run_code(args.iota, init_G)
+    boozer_init_start = time.monotonic()
+    with stdout_to_log(log, tap=tap):
+        res = boozersurface.run_code(args.iota, init_G)
+    boozer_init_end = time.monotonic()
+    boozer_init_runtime = timedelta(seconds=boozer_init_end - boozer_init_start)
     _success = res["success"]
     try:
         _is_not_intersecting = not boozersurface.surface.is_self_intersecting()
@@ -301,6 +326,8 @@ def main(argv=None):
             log("Boozer solve did not converge successfully.")
         if not _is_not_intersecting:
             log("Initial surface is self-intersecting.")
+    log(f" --- {datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S %Z')} ---")
+    log(f"Initial Boozer solve runtime = {boozer_init_runtime}")
     
     JF, objectives = build_objective(boozersurface, config, log, args.iota, args=args)
     tracker = dict(
@@ -310,13 +337,22 @@ def main(argv=None):
         dJ=JF.dJ().copy(),
         sdofs=boozersurface.surface.x.copy(),
         iota=objectives["iota"](),
-        G=objectives["G"]()
+        G=objectives["G"](),
+        solver_iters=solver_iters,
     )
 
+    nit_keys = ["newton_nit"]
+    if use_boozer_ls: nit_keys = ["bfgs_nit"] + nit_keys
     def log_row():
-        vals = [tracker["iter"], tracker["eval"], *(f() for f in objectives.values())]
+        iter_vals = list(tracker["solver_iters"].values())
+        vals = [
+            time.monotonic() - start_time,
+            tracker["iter"],
+            tracker["eval"],
+            *iter_vals,
+            *(f() for f in objectives.values())]
         log(",".join(f"{v}" for v in vals), data=True)
-    log(",".join(["iter", "eval", *objectives]), data=True)
+    log(",".join(["time", "iter", "eval", *nit_keys, *objectives]), data=True)
     log_row()
 
     def fun(x):
@@ -326,7 +362,13 @@ def main(argv=None):
 
         JF.x = x
         
-        res = boozersurface.run_code(tracker["iota"], tracker["G"])
+        for key in tracker["solver_iters"]:
+            tracker["solver_iters"][key] = 0
+        boozer_solve_start = time.monotonic()
+        with stdout_to_log(log, tap=tap):
+            res = boozersurface.run_code(tracker["iota"], tracker["G"])
+        boozer_solve_end = time.monotonic()
+        boozer_solve_runtime = timedelta(seconds=boozer_solve_end - boozer_solve_start)
         _success = res["success"]
         try:
             _is_not_intersecting = not boozersurface.surface.is_self_intersecting()
@@ -334,6 +376,7 @@ def main(argv=None):
             log(f"Error checking self-intersection: {e}")
             _is_not_intersecting = False
         success = _success and _is_not_intersecting
+        log(f"Boozer solve runtime = {boozer_solve_runtime}")
 
         if success:
             J = JF.J()

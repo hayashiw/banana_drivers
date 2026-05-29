@@ -247,7 +247,7 @@ def main(argv=None):
 
     config = load_config(args.config)
     os.makedirs(args.output_dir, exist_ok=True)
-    logfile = os.path.join(args.output_dir, f"{prefix}log{suffix}.txt")
+    logfile = os.path.join(args.output_dir, f"{prefix}log_stage2{suffix}.txt")
     log = DriverLog(logfile)
     log(f"Log file → {logfile}")
     start_time = time.monotonic()
