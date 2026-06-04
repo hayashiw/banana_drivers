@@ -41,7 +41,6 @@ from ..objectives.cwsobjectives import (
 )
 from ..objectives.currentobjectives import ScaledCurrentWrapper
 from ..utils.boozersurface import build_boozersurface
-from ..utils.cli import resolve_filename
 from ..utils.constants import MU0
 from ..utils.io import DriverLog, stdout_to_log, save_to_json
 
@@ -256,16 +255,20 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     boozersurface_file = args.boozersurface_file
-    _, prefix1, prefix2, *_ = resolve_filename(boozersurface_file)
+    biotsavart_tag, surface_tag = os.path.basename(boozersurface_file).split(".")[:2]
 
     version_number = 0
-    find_files = glob.glob(os.path.join(args.out_dir, f"{prefix1}.{prefix2}.boozersurface.opt.v*.json"))
+    find_files = glob.glob(os.path.join(args.out_dir, f"{biotsavart_tag}.{surface_tag}.boozersurface.singlestage_opt.v*.json"))
     for file in find_files:
-        version_number = max(version_number, resolve_filename(file)[3]+1)
+        file_split = os.path.basename(file).split(".")
+        for ipos, key in enumerate(file_split):
+            if key == "singlestage_opt":
+                iver = int(file_split[ipos+1][1:])
+                version_number = max(version_number, iver + 1)
 
     config = load_config(args.config)
     os.makedirs(args.out_dir, exist_ok=True)
-    logfile = os.path.join(args.out_dir, f"{prefix1}.{prefix2}.log_singlestage.v{version_number}.txt")
+    logfile = os.path.join(args.out_dir, f"{biotsavart_tag}.{surface_tag}.log_singlestage.v{version_number}.txt")
     log = DriverLog(logfile)
     log(f"Log file → {logfile}")
     start_time = time.monotonic()
@@ -382,7 +385,7 @@ def main(argv=None):
         os.makedirs(args.save_iter_dir, exist_ok=True)
         save_iter_freq = max(1, args.save_iter_freq)
         save_iters = True
-        iter_savefile = save_to_json(boozersurface, prefix1, prefix2=prefix2, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
+        iter_savefile = save_to_json(boozersurface, biotsavart_tag, prefix2=surface_tag, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
 
     def callback(x):
         tracker["iters"] += 1
@@ -394,7 +397,7 @@ def main(argv=None):
         tracker["dJ"] = JF.dJ().copy()
         log_row()
         if save_iters and tracker["iters"] % save_iter_freq == 0:
-            iter_savefile = save_to_json(boozersurface, prefix1, prefix2=prefix2, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
+            iter_savefile = save_to_json(boozersurface, biotsavart_tag, prefix2=surface_tag, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
 
     result = minimize(
         fun,
@@ -411,7 +414,7 @@ def main(argv=None):
     log(result.message)
 
 
-    savefile = save_to_json(boozersurface, prefix1, prefix2=prefix2, version_number=version_number, out_dir=args.out_dir)
+    savefile = save_to_json(boozersurface, biotsavart_tag, prefix2=surface_tag, version_number=version_number, init_opt="singlestage_opt", out_dir=args.out_dir)
     log(f"Saved BoozerSurface → {savefile}")
     end_time = time.monotonic()
     run_time = timedelta(seconds=end_time - start_time)
