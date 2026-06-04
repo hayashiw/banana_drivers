@@ -49,17 +49,9 @@ def main():
     savefile = save_to_json(biotsavart, "original", init_opt="init", out_dir=BIOTSAVARTS_DIR)
     print(f"Initial biotsavart saved to: {savefile}")
 
-    boozersurface = build_boozersurface(biotsavart, surface, constraint_weight=1.0)
+    boozersurface = build_boozersurface(biotsavart, surface, constraint_weight=1e2)
     savefile = save_to_json(boozersurface, "original", "original", init_opt="init", out_dir=BOOZERSURFACES_DIR)
     print(f"Initial boozersurface saved to: {savefile}")
-
-    iota_guess = 0.15
-    tf_coils = biotsavart.coils[TF_IDX:TF_IDX+N_TF]
-    tf_current = sum(abs(coil.current.get_value()) for coil in tf_coils)
-    G_guess = -tf_current * MU0
-    state = dict(iota=iota_guess, G=G_guess)
-    savefile = save_to_json(state, "original", "original", init_opt="init", out_dir=BOOZERSURFACES_DIR)
-    print(f"Initial state saved to: {savefile}")
 
     inputs_markdown_file = os.path.join(INPUTS_DIR, "inputs.md")
     if not os.path.exists(inputs_markdown_file):
