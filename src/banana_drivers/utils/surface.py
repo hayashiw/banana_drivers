@@ -1,82 +1,147 @@
 import os
-from numpy import linspace
+import numpy as np
 
 from simsopt._core import load
 from simsopt.geo import SurfaceRZFourier, SurfaceXYZTensorFourier
 
-_surface_classes = (SurfaceRZFourier, SurfaceXYZTensorFourier)
+surface_classes = (SurfaceRZFourier, SurfaceXYZTensorFourier)
 
-DEFAULT_NPHI = 128
-DEFAULT_NTHETA = 127
+DEFAULT_NPHI = 65
+DEFAULT_NTHETA = 64
 
-def build_surface(
-    surf_file: str,
-    s: float = 1.0,
-    scale: float | None = None,
-    surf_range: str = "field period",
-    nphi: int = DEFAULT_NPHI,
-    ntheta: int = DEFAULT_NTHETA
-) -> SurfaceRZFourier | SurfaceXYZTensorFourier:
-    ext = os.path.splitext(surf_file)[1]
-
-    if ext == ".json":
-        surface = load(surf_file)
-        if not isinstance(surface, _surface_classes):
-            raise TypeError(f"Expected surface of type {_surface_classes}, got {type(surface)}")
-    elif ext == ".nc":
-        surface = SurfaceRZFourier.from_wout(surf_file, s=s)
-        if scale is not None:
-            surface.set_dofs(surface.get_dofs() * scale / surface.major_radius())
+def convert_rz_to_xyztensor(surface_rz: SurfaceRZFourier | str) -> SurfaceXYZTensorFourier:
+    if isinstance(surface_rz, str):
+        surface_rz = load(surface_rz)
+    assert isinstance(surface_rz, surface_classes), f"Expected SurfaceRZFourier, SurfaceXYZTensorFourier, or filepath, got {type(surface_rz)}"
+    if isinstance(surface_rz, SurfaceXYZTensorFourier):
+        surface = surface_rz
     else:
-        raise ValueError(f"Unsupported surface file extension: {ext}")
-    
-    surface = resize_surface(surface, surf_range, nphi=nphi, ntheta=ntheta)
-
+        surface = SurfaceXYZTensorFourier(
+            mpol=surface_rz.mpol,
+            ntor=surface_rz.ntor,
+            nfp=surface_rz.nfp,
+            stellsym=surface_rz.stellsym,
+            quadpoints_phi=surface_rz.quadpoints_phi,
+            quadpoints_theta=surface_rz.quadpoints_theta,
+        )
+        surface.least_squares_fit(surface_rz.gamma())
     return surface
 
-def resize_surface(
-    init_surface: SurfaceRZFourier | SurfaceXYZTensorFourier,
-    surf_range: str,
-    mpol: int | None = None,
-    ntor: int | None = None,
+def change_surface_range(
+    surface_in: SurfaceRZFourier | SurfaceXYZTensorFourier | str,
+    *,
+    surf_range: str = "field period",
     nphi: int = DEFAULT_NPHI,
-    ntheta: int = DEFAULT_NTHETA
-) -> SurfaceRZFourier | SurfaceXYZTensorFourier:
-    if not isinstance(init_surface, _surface_classes):
-        raise TypeError(f"Expected surface of type {_surface_classes}, got {type(init_surface)}")
-    
-    nfp = init_surface.nfp
-    if surf_range == "field period":
-        phimax = 1 / nfp
-    elif surf_range == "full torus":
+    ntheta: int = DEFAULT_NTHETA,
+) -> SurfaceXYZTensorFourier:
+    # Also applies to changing surface quadpoints
+    surface_in = convert_rz_to_xyztensor(surface_in)
+
+    nfp = surface_in.nfp
+    if surf_range == "full torus":
         phimax = 1
+    elif surf_range == "field period":
+        phimax = 1 / nfp
     elif surf_range == "half period":
         phimax = 1 / nfp / 2
     else:
-        raise ValueError(f"Unsupported range: {surf_range}")
-    
-    qpts_phi = linspace(0, phimax, nphi, endpoint=False)
-    qpts_theta = linspace(0, 1, ntheta, endpoint=False)
+        raise ValueError(f"Invalid surface range: {surf_range}")
 
-    if mpol is None: mpol = init_surface.mpol
-    if ntor is None: ntor = init_surface.ntor
-    
-    surface_func = type(init_surface)
-    surface = surface_func(
+    surface = SurfaceXYZTensorFourier(
+        mpol=surface_in.mpol,
+        ntor=surface_in.ntor,
+        nfp=surface_in.nfp,
+        stellsym=surface_in.stellsym,
+        quadpoints_phi=np.linspace(0, phimax, nphi, endpoint=False),
+        quadpoints_theta=np.linspace(0, 1, ntheta, endpoint=False),
+    )
+    surface.x = surface_in.x.copy()
+    return surface
+
+def change_surface_resolution(
+    surface_in: SurfaceRZFourier | SurfaceXYZTensorFourier | str,
+    *,
+    mpol: int | None = None,
+    ntor: int | None = None,      
+):
+    surface_in = convert_rz_to_xyztensor(surface_in)
+
+    if mpol is None: mpol = surface_in.mpol
+    if ntor is None: ntor = surface_in.ntor
+    surface = SurfaceXYZTensorFourier(
         mpol=mpol,
         ntor=ntor,
-        nfp=nfp,
-        stellsym=init_surface.stellsym,
-        quadpoints_phi=qpts_phi,
-        quadpoints_theta=qpts_theta,
+        nfp=surface_in.nfp,
+        stellsym=surface_in.stellsym,
+        quadpoints_phi=surface_in.quadpoints_phi,
+        quadpoints_theta=surface_in.quadpoints_theta,
     )
-    if (mpol, ntor) == (init_surface.mpol, init_surface.ntor):
-        surface.set_dofs(init_surface.get_dofs())
-    else:
-        if (mpol >= init_surface.mpol) and (ntor >= init_surface.ntor):
-            for key in init_surface.dof_names:
-                surface.set(key, init_surface.get(key))
-        else:
-            surface.least_squares_fit(init_surface.gamma())
+    surface.least_squares_fit(surface_in.gamma())
+    return surface
 
+def convert_to_boozerexact_surface(
+    surface_in: SurfaceRZFourier | SurfaceXYZTensorFourier | str,
+    *,
+    surf_range: str = "field period",
+    mpol: int | None = None,
+    ntor: int | None = None,      
+):
+    surface_in = convert_rz_to_xyztensor(surface_in)
+
+    if mpol is None: mpol = surface_in.mpol
+    if ntor is None: ntor = surface_in.ntor
+    if (mpol != surface_in.mpol) or (ntor != surface_in.ntor):
+        surface_in = change_surface_resolution(surface_in, mpol=mpol, ntor=ntor)
+
+    nphi = 2*ntor + 1
+    ntheta = 2*mpol + 1
+    surface = change_surface_range(surface_in, surf_range=surf_range, nphi=nphi, ntheta=ntheta)
+    return surface
+
+def rebuild_surface(
+    surface_in: SurfaceRZFourier | SurfaceXYZTensorFourier | str,
+    *,
+    surf_range: str | None = None,
+    mpol: int | None = None,
+    ntor: int | None = None,
+    nphi: int | None = None,
+    ntheta: int | None = None,
+) -> SurfaceXYZTensorFourier:
+    if (
+        (surf_range is None)
+        and (mpol is None)
+        and (ntor is None)
+        and (nphi is None)
+        and (ntheta is None)
+    ):
+        return surface_in
+    surface = convert_rz_to_xyztensor(surface_in)
+
+    nfp = surface.nfp
+    phimax = surface.quadpoints_phi.max()
+    iphi = np.abs(np.array([1/nfp/2, 1/nfp, 1]) - phimax).argmin()
+    surf_range_in = ["half period", "field period", "full torus"]
+    surf_range_in = surf_range_in[iphi]
+
+    if (
+        ((surf_range is not None) and (surf_range != surf_range_in))
+        or ((nphi is not None) and (nphi != surface.quadpoints_phi.size))
+        or ((ntheta is not None) and (ntheta != surface.quadpoints_theta.size))
+    ):
+        surface = change_surface_range(
+            surface,
+            surf_range=surf_range or surf_range_in,
+            nphi=nphi or surface.quadpoints_phi.size,
+            ntheta=ntheta or surface.quadpoints_theta.size,
+        )
+    
+    if (
+        ((mpol is not None) and (mpol != surface.mpol))
+        or ((ntor is not None) and (ntor != surface.ntor))
+    ):
+        surface = change_surface_resolution(
+            surface,
+            mpol=mpol or surface.mpol,
+            ntor=ntor or surface.ntor,
+        )
     return surface

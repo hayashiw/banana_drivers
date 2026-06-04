@@ -1,0 +1,111 @@
+import numpy as np
+
+from simsopt._core import load
+from simsopt.field import BiotSavart
+
+from .coils import (
+    generate_tf_coils,
+    generate_banana_coils,
+    generate_proxy_coils,
+    generate_vf_coils,
+    extract_banana_dofs,
+)
+from ..hardware import (
+    TF_IDX, BANANA_IDX, PROXY_IDX, VF_IDX,
+    N_TF, N_BANANA, N_PROXY, N_VF, N_COILS
+)
+
+def build_biotsavart(
+    tf_current_ka: float,
+    banana_current_ka: float,
+    proxy_current_ka : float,
+    proxy_rz : tuple[float, float],
+    vf_current_ka: float,
+    *,
+    tf_fix_current: bool = True,
+    banana_fix_current: bool = True,
+    banana_dofs: dict[str, float] | None = None,
+    banana_order: int | None = None,
+    banana_qpts_per_order: int | None = None,
+    vf_fix_current: bool = True,
+) -> BiotSavart:
+    tf_coils = generate_tf_coils(tf_current_ka, tf_fix_current)
+
+    banana_kwargs = dict(fix_current=banana_fix_current)
+    if banana_order is not None: banana_kwargs["order"] = banana_order
+    if banana_dofs is not None: banana_kwargs["dofs"] = banana_dofs
+    if banana_qpts_per_order is not None: banana_kwargs["qpts_per_order"] = banana_qpts_per_order
+    banana_coils = generate_banana_coils(banana_current_ka, **banana_kwargs)
+
+    proxy_coils = generate_proxy_coils(proxy_current_ka, proxy_rz)
+
+    vf_coils = generate_vf_coils(vf_current_ka, vf_fix_current)
+
+    coils = tf_coils + banana_coils + proxy_coils + vf_coils
+    return BiotSavart(coils)
+
+def rebuild_biotsavart(
+    biotsavart: str | BiotSavart,
+    *,
+    tf_current_ka: float | None = None,
+    tf_fix_current: bool | None = None,
+    banana_current_ka: float | None = None,
+    banana_fix_current: bool | None = None,
+    banana_dofs: dict[str, float] | None = None,
+    banana_order: int | None = None,
+    banana_qpts_per_order: int | None = None,
+    proxy_current_ka : float | None = None,
+    proxy_rz : tuple[float, float] | None = None,
+    vf_current_ka: float | None = None,
+    vf_fix_current: bool | None = None,
+) -> BiotSavart:
+    if isinstance(biotsavart, str):
+        biotsavart = load(biotsavart)
+
+    coils = biotsavart.coils
+    ncoils = len(coils)
+    err_msg = \
+        f"Number of coils mismatch: " \
+        f"expected TF ({N_TF}) + BANANA ({N_BANANA}) " \
+        f"+ PROXY ({N_PROXY}) + VF ({N_VF}) = {N_COILS}, " \
+        f"got {ncoils}"    
+    assert ncoils == N_COILS, err_msg
+
+    tf_coil = coils[TF_IDX]
+    if tf_current_ka is None: tf_current_ka = tf_coil.current.get_value()/1e3
+    if tf_fix_current is None: tf_fix_current = (len(tf_coil.current.x) == 0)
+
+    banana_coil = coils[BANANA_IDX]
+    if banana_current_ka is None: banana_current_ka = banana_coil.current.get_value()/1e3
+    if banana_fix_current is None: banana_fix_current = (len(banana_coil.current.x) == 0)
+    if banana_order is None: banana_order = banana_coil.curve.order
+    if banana_dofs is None: banana_dofs = extract_banana_dofs(banana_coil.curve)
+    if banana_qpts_per_order is None: banana_qpts_per_order = banana_coil.curve.quadpoints.size // banana_order
+
+    proxy_coil = coils[PROXY_IDX]
+    if proxy_current_ka is None: proxy_current_ka = proxy_coil.current.get_value()/1e3
+    if proxy_rz is None:
+        x, y, z = proxy_coil.curve.gamma().T
+        r = np.sqrt(x**2 + y**2)
+        proxy_R = r.mean()
+        proxy_Z = z.mean()
+        proxy_rz = (proxy_R, proxy_Z)
+
+    vf_coil = coils[VF_IDX]
+    if vf_current_ka is None: vf_current_ka = vf_coil.current.get_value()/1e3
+    if vf_fix_current is None: vf_fix_current = (len(vf_coil.current.x) == 0)
+
+    return build_biotsavart(
+        tf_current_ka=tf_current_ka,
+        banana_current_ka=banana_current_ka,
+        proxy_current_ka=proxy_current_ka,
+        proxy_rz=proxy_rz,
+        vf_current_ka=vf_current_ka,
+        tf_fix_current=tf_fix_current,
+        banana_fix_current=banana_fix_current,
+        banana_order=banana_order,
+        banana_dofs=banana_dofs,
+        banana_qpts_per_order=banana_qpts_per_order,
+        vf_fix_current=vf_fix_current,
+    )
+

@@ -1,17 +1,17 @@
 weights:
-  sqflux: 1.0
-  length: 2e-3
-  ccdist: 1e6
+  sqflux:    1.0
+  length:    2e-3
+  ccdist:    1e6
   curvature: 1e-2
-  poloidal: 1e2
-  width: 1e1
-  selfint: 1e1
-  currents: 1e6
+  poloidal:  1e2
+  width:     1e1
+  selfint:   1e1
+  currents:  1e6
 
 targets:
 # The original poloidal extent was 45 degrees from the inboard midplane with the winding surface that was concentric with the vacuum vessel.
 # Starting from May 26, 2026, the poloidal extent is 70 degrees from the inboard midplane for a smaller winding surface that is not concentric with the vacuum vessel.
-  poloidal: 70 # max, degrees
+  poloidal:  70 # max, degrees
   width_max: 0.17 # max, meters
   width_min: 0.1 # min, meters
-  selfint: 0.01 # min, unitless
+  selfint:   0.01 # min, unitless

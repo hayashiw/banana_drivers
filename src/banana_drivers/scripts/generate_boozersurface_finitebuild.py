@@ -11,7 +11,7 @@ from simsopt.field import (
 )
 from simsopt.field.coil import ScaledCurrent
 
-from banana_drivers.hardware import (
+from ..hardware import (
     hbt_banana_fb,
     hbt_banana_ws,
     TF_IDX,
@@ -23,25 +23,23 @@ from banana_drivers.hardware import (
     N_PROXY,
     N_VF,
 )
-from banana_drivers.finitebuild.finitebuild import create_cws_multifilament_grid
+from ..utils.finitebuild import create_cws_multifilament_grid
+from ..utils.boozersurface import build_boozersurface
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="Generate BiotSavart finite build.")
-    parser.add_argument("biotsavart_file", help="Path to the BiotSavart file.")
-    parser.add_argument("--banana-current-ka", default=None, type=float, help="Override the banana coil current (units kA).")
+    parser = argparse.ArgumentParser(description="Generate a finite build BoozerSurface JSON file.")
+    parser.add_argument("boozersurface_file", help="Path to a BoozerSurface JSON file.")
+    parser.add_argument("--out-dir", type=str, default=None, help="Out directory. Default is same as boozersurface_file.")
     return parser
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    biotsavart_file = os.path.abspath(args.biotsavart_file)
-    print(f"Generating BiotSavart finite build for {biotsavart_file}")
-    if args.banana_current_ka is not None:
-        print(f"Overriding banana coil current to {args.banana_current_ka} kA")
-        override_curr = True
-    else:
-        override_curr = False
+    boozersurface_file = os.path.abspath(args.boozersurface_file)
+    print(f"Generating finite build for {boozersurface_file}")
 
-    biotsavart = load(biotsavart_file)
+    boozersurface = load(boozersurface_file)
+    biotsavart = boozersurface.biotsavart
+
     tf_coils = biotsavart.coils[TF_IDX:TF_IDX+N_TF]
     banana_coils = biotsavart.coils[BANANA_IDX:BANANA_IDX+N_BANANA]
     proxy_coils = biotsavart.coils[PROXY_IDX:PROXY_IDX+N_PROXY]
@@ -50,7 +48,8 @@ def main(argv=None):
     nfil = hbt_banana_fb.numfilaments_n * hbt_banana_fb.numfilaments_b
     base_coil = banana_coils[0]
     base_curves = [base_coil.curve]
-    total_current = ScaledCurrent(Current(1.0), args.banana_current_ka*1e3) if override_curr else base_coil.current
+    banana_current = base_coil.current.get_value()
+    total_current = ScaledCurrent(Current(1.0), banana_current)
     base_currents = [total_current/nfil]
 
     base_curves_finite_build = sum([
@@ -69,13 +68,24 @@ def main(argv=None):
     banana_coils_finitebuild = [Coil(c, curr) for c, curr in zip(curves_fb, currents_fb)]
 
     coils = tf_coils + banana_coils_finitebuild + proxy_coils + vf_coils
-    biotsavart_finite_build = BiotSavart(coils)
+    biotsavart_finitebuild = BiotSavart(coils)
 
-    base = os.path.basename(biotsavart_file)
-    out_dir = os.path.dirname(biotsavart_file)
-    save_file = os.path.join(out_dir, base.replace("biotsavart", "biotsavart_finitebuild"))
-    biotsavart_finite_build.save(save_file)
-    print(f"Saved BiotSavart finite build to {save_file}")
+    boozersurface_finitebuild = build_boozersurface(
+        biotsavart_finitebuild,
+        boozersurface.surface,
+        constraint_weight=boozersurface.constraint_weight,
+        proxy_coil=proxy_coils[0],
+    )
+
+    base = os.path.basename(boozersurface_file)
+    biotsavart_tag, surface_tag, *remaining = os.path.basename(boozersurface_file).split(".")
+    biotsavart_tag += "_finitebuild"
+    new_base = f"{biotsavart_tag}.{surface_tag}." + ".".join(remaining)
+
+    out_dir = args.out_dir or os.path.dirname(boozersurface_file)
+    savefile = os.path.join(out_dir, new_base)
+    boozersurface_finitebuild.save(savefile)
+    print(f"Saved BoozerSurface finite build to {savefile}")
     return 0
 
 if __name__ == "__main__":

@@ -35,11 +35,18 @@ class BananaCoilFiniteBuild:
     horizontal_spacing: float = 0.00531 # meters = 5.31 mm
     numfilaments_n: int = 2
     numfilaments_b: int = 7
+    numfilaments: int = numfilaments_n * numfilaments_b
 
+DEFAULT_TF_CURRENT_KA = -80.0 # kiloAmperes
+DEFAULT_BANANA_CURRENT_KA = 16.0 # kiloAmperes
+tf_current_min = min(0, DEFAULT_TF_CURRENT_KA)
+tf_current_max = max(0, DEFAULT_TF_CURRENT_KA)
+banana_current_min = min(0, DEFAULT_BANANA_CURRENT_KA)
+banana_current_max = max(0, DEFAULT_BANANA_CURRENT_KA)
 @dataclass(frozen=True)
 class HardwareLimits:
-    tf_current_ka_limits: tuple[float, float] = (-80.0, 0.0) # kiloAmperes
-    banana_current_ka_limits: tuple[float, float] = (0.0, 16.0) # kiloAmperes
+    tf_current_ka_limits: tuple[float, float] = (tf_current_min, tf_current_max) # kiloAmperes
+    banana_current_ka_limits: tuple[float, float] = (banana_current_min, banana_current_max) # kiloAmperes
     banana_curv_p: int   = 4
     max_curvature: float = 100.0 # 1/meters
     max_length: float    = 1.900 # meters
@@ -49,6 +56,10 @@ class HardwareLimits:
     # The original minimum coil-plasma distance was 0.015 m or 1.5 cm.
     # This value was used up until May 26, 2026.
     min_csdist: float    = 0.010 # meters
+
+    # Short width is the shortest width of the coil in 3-D Cartesian space
+    # i.e. the width necessary to fit through the vacuum port
+    max_short_width: float = 0.197 # meters
 
 @dataclass(frozen=True)
 class HBTVFCoils:
@@ -93,7 +104,3 @@ BANANA_IDX = N_TF
 PROXY_IDX  = N_TF + N_BANANA
 VF_IDX     = N_TF + N_BANANA + N_PROXY
 N_COILS    = VF_IDX + N_VF
-
-# Default values but not hardware constraints
-DEFAULT_BANANA_ORDER = 3
-DEFAULT_PROXY_RZ = (0.925, 0.0)

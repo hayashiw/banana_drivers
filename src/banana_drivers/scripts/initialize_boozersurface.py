@@ -1,19 +1,19 @@
 import argparse
+import json
 import numpy as np
 import os
 
 from simsopt._core import load
 
-from banana_drivers.hardware import N_TF, PROXY_IDX
-from banana_drivers.utils.cli import common_parser, resolve_output_tag
-from banana_drivers.utils.boozersurface import load_boozersurface_from_biotsavart
+from ..hardware import N_TF
+from ..utils.cli import resolve_filename
+from ..utils.boozersurface import build_boozersurface
 
 MU0 = np.pi * 4e-7
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Initialize a BoozerSurface from a BiotSavart JSON file and Surface JSON file.",
-        parents=[common_parser()])
+        description="Initialize a BoozerSurface from a BiotSavart JSON file and Surface JSON file.")
     parser.add_argument("biotsavart_file", type=str, help="Path to the BiotSavart JSON file.")
     parser.add_argument("surface_file", type=str, help="Path to the Surface JSON file.")
     parser.add_argument("iota", type=float, help="Initial guess for iota.")
@@ -25,18 +25,20 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    prefix, suffix = resolve_output_tag(args)
-    if len(prefix): prefix += "_"
-    if len(suffix): suffix = "_" + suffix
     biotsavart_file = os.path.abspath(args.biotsavart_file)
     surface_file = os.path.abspath(args.surface_file)
+    prefix1 = resolve_filename(biotsavart_file)[1]
+    prefix2 = resolve_filename(surface_file)[1]
+    log_file = f"{prefix1}.{prefix2}.boozer_init.log"
+    savefile = f"{prefix1}.{prefix2}.boozersurface.init.json"
+    statefile = f"{prefix1}.{prefix2}.state.init.json"
+
     iota_guess = args.iota
     signG = args.signG
     constraint_weight = args.constraint_weight
-    mpol = args.mpol
-    ntor = args.ntor
+    # mpol = args.mpol
+    # ntor = args.ntor
 
-    log_file = f"{prefix}log_boozer_init{suffix}.txt"
     with open(log_file, "w") as f:
         f.write("") # clear log file
     def _print(*args, **kwargs):
@@ -53,17 +55,15 @@ def main(argv=None):
 
     biotsavart = load(biotsavart_file)
     surface = load(surface_file)
-    if mpol is None:
-        mpol = surface.mpol
-    if ntor is None:
-        ntor = surface.ntor
+    # if mpol is None:
+    #     mpol = surface.mpol
+    # if ntor is None:
+    #     ntor = surface.ntor
 
-    _print(f"mpol: {mpol}")
-    _print(f"ntor: {ntor}")
+    # _print(f"mpol: {mpol}")
+    # _print(f"ntor: {ntor}")
 
-    boozersurface = load_boozersurface_from_biotsavart(
-        biotsavart, surface, constraint_weight=constraint_weight, mpol=mpol, ntor=ntor
-    )
+    boozersurface = build_boozersurface(biotsavart, surface, constraint_weight=constraint_weight)
 
     tf_coils = biotsavart.coils[:N_TF]
     total_current = sum(abs(c.current.get_value()) for c in tf_coils)
@@ -75,11 +75,10 @@ def main(argv=None):
     res = boozersurface.run_code(iota_guess, G0_guess)
     success = res["success"]
     if success:
-        savefile = f"{prefix}boozersurface_init{suffix}.json"
         boozersurface.save(savefile)
         _print(f"Boozer solve success — saved initialized BoozerSurface to {savefile}")
-        statefile = f"{prefix}boozersurface_init{suffix}_state.json"
-        np.savez(statefile, iota=res["iota"], G=res["G"])
+        with open(statefile, "w") as f:
+            json.dump({"iota": res["iota"], "G": res["G"]}, f, indent=2)
         _print(f"Saved iota and G to {statefile}")
     else:
         _print(f"Boozer solve failed. Residual norm: {np.linalg.norm(res['residual'])}")

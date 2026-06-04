@@ -1,4 +1,5 @@
 from numpy import linspace, loadtxt, sign
+import yaml
 
 from simsopt.field import BiotSavart, Coil, Current, coils_via_symmetries
 from simsopt.field.coil import ScaledCurrent
@@ -9,31 +10,17 @@ from simsopt.geo import (
     create_equally_spaced_curves,
 )
 
-from banana_drivers.paths import BANANA_INIT_DOFS
-from banana_drivers.hardware import (
+from ..paths import BANANA_DOFS_INIT_FILE
+from ..hardware import (
     hbt_tf,
     hbt_banana_ws,
     hbt_vf,
-    hardware_limits,
-    DEFAULT_BANANA_ORDER,
-    DEFAULT_PROXY_RZ,
 )
 
-tf_max_current_sign = 1
-tf_max_current_ka = 0
-for val in hardware_limits.tf_current_ka_limits:
-    if abs(val) > tf_max_current_ka:
-        tf_max_current_sign = sign(val)
-    tf_max_current_ka = max(tf_max_current_ka, abs(val))
-tf_max_current_ka *= tf_max_current_sign
-
-banana_max_current_sign = 1
-banana_max_current_ka = 0
-for val in hardware_limits.banana_current_ka_limits:
-    if abs(val) > banana_max_current_ka:
-        banana_max_current_sign = sign(val)
-    banana_max_current_ka = max(banana_max_current_ka, abs(val))
-banana_max_current_ka *= banana_max_current_sign
+DEFAULT_BANANA_ORDER = 4
+DEFAULT_QPTS_PER_ORDER = 128
+PROXY_NQPTS = 128
+VF_NQPTS = 128
 
 def generate_tf_coils(
     tf_current_ka: float,
@@ -55,22 +42,27 @@ def generate_tf_coils(
     return tf_coils
 
 def read_banana_dofs(dofs_file: str) -> dict:
-    dofs = {}
-    for key, val in loadtxt(dofs_file, dtype=str, ndmin=2, comments="#"):
-        dofs[key] = float(val)
-    return dofs
+    with open(dofs_file, "r") as f:
+        dofs = yaml.safe_load(f)
+    order = 0
+    for key, val in dofs.items():
+        n = int(key.split("(")[-1].split(")")[0])
+        order = max(order, n)
+    return dofs, order
 
-def extract_banana_dofs(curve: CurveCWSFourierCPP) -> dict:
-    keys = curve.local_full_dof_names
-    vals = curve.local_full_x
-    dofs = dict(zip(keys, vals))
+def extract_banana_dofs(curve: CurveCWSFourierCPP) -> dict[str, float]:
+    dofs = {}
+    for dof_name in curve.local_dof_names:
+        dofs[dof_name] = curve.get(dof_name)
     return dofs
 
 def generate_banana_coils(
     banana_current_ka: float,
-    banana_order: int,
-    dofs: dict[str, float],
-    fix_current: bool = True
+    *,
+    fix_current: bool = True,
+    order: int = DEFAULT_BANANA_ORDER,
+    dofs: dict[str, float] | None = None,
+    qpts_per_order: int = DEFAULT_QPTS_PER_ORDER,
 ) -> list[Coil]:
     winding_surface = SurfaceRZFourier(
         nfp=hbt_banana_ws.nfp, stellsym=hbt_banana_ws.stellsym
@@ -79,13 +71,34 @@ def generate_banana_coils(
     winding_surface.set_rc(1, 0, hbt_banana_ws.minor_radius)
     winding_surface.set_zs(1, 0, hbt_banana_ws.minor_radius)
 
-    nqpts = 64 * banana_order
+    nqpts = qpts_per_order * order
     banana_curve = CurveCWSFourierCPP(
         linspace(0, 1, nqpts, endpoint=False),
-        order=banana_order, surf=winding_surface
+        order=order,
+        surf=winding_surface
     )
-    for key, val in dofs.items():
-        banana_curve.set(key, val)
+
+    # Here `min_order` refers to the minimum necessary Fourier order for direct copying of DOFs
+    # In reality `min_order` is the maximum Fourier order present in the DOFs file
+    if dofs is None:
+        dofs, min_order = read_banana_dofs(BANANA_DOFS_INIT_FILE)
+    else:
+        min_order = 0
+        for key, val in dofs.items():
+            n = int(key.split("(")[-1].split(")")[0])
+            min_order = max(min_order, n)
+    if order < min_order:
+        fit_curve = CurveCWSFourierCPP(
+            linspace(0, 1, nqpts, endpoint=False),
+            order=min_order,
+            surf=winding_surface
+        )
+        for key, val in dofs.items():
+            fit_curve.set(key, val)
+        banana_curve.least_squares_fit(fit_curve.gamma())
+    else:
+        for key, val in dofs.items():
+            banana_curve.set(key, val)
 
     banana_current = ScaledCurrent(Current(1.0), banana_current_ka*1e3)
     if fix_current: banana_current.fix_all()
@@ -103,7 +116,7 @@ def generate_proxy_coils(
     rz: tuple[float, float]
 ) -> list[Coil]:
     R, Z = rz
-    nqpts = 128
+    nqpts = PROXY_NQPTS
     proxy_curve = CurveXYZFourier(nqpts, 1)
     proxy_curve.set('xc(1)', R)
     proxy_curve.set('ys(1)', R)
@@ -120,7 +133,7 @@ def generate_vf_coils(
     vf_current_ka: float,
     fix_current: bool = True
 ) -> list[Coil]:
-    nqpts = 128
+    nqpts = VF_NQPTS
     vf_coils = []
     for R, Z, sign in hbt_vf:
         curve = CurveXYZFourier(nqpts, order=1)
@@ -132,26 +145,3 @@ def generate_vf_coils(
         if fix_current: current.fix_all()
         vf_coils.append(Coil(curve, current))
     return vf_coils
-
-def build_biotsavart(*,
-    tf_current_ka: float = tf_max_current_ka,
-    tf_fix: bool = True,
-    banana_current_ka: float = banana_max_current_ka,
-    banana_order: int = DEFAULT_BANANA_ORDER,
-    banana_dofs: dict[str, float] | None = None,
-    banana_fix: bool = True,
-    proxy_current_ka: float = 0.0,
-    proxy_rz: tuple[float, float] = DEFAULT_PROXY_RZ,
-    vf_current_ka: float = 0.0,
-    vf_fix: bool = True
-) -> BiotSavart:
-    if banana_dofs is None:
-        banana_dofs = read_banana_dofs(BANANA_INIT_DOFS)
-
-    coils = []
-    coils += generate_tf_coils(tf_current_ka, fix_current=tf_fix)
-    coils += generate_banana_coils(banana_current_ka, banana_order, banana_dofs, fix_current=banana_fix)
-    coils += generate_proxy_coils(proxy_current_ka, proxy_rz)
-    coils += generate_vf_coils(vf_current_ka, fix_current=vf_fix)
-    biotsavart = BiotSavart(coils)
-    return biotsavart

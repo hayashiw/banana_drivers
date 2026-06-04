@@ -24,9 +24,16 @@ from banana_drivers.hardware import (
     N_VF
 )
 
+savefile = None
+def _print(*args):
+    print(*args, flush=True)
+    if savefile is not None:
+        with open(savefile, "a") as f:
+            print(*args, file=f, flush=True)
+
 def indent_print(*args, nindent=0):
     indent = " " * nindent
-    print(indent, *args)
+    _print(indent, *args)
 
 def find_winding_surface(curve, Z0=0):
     x, y, z = curve.gamma().T
@@ -60,7 +67,14 @@ def print_biotsavart_metrics(biotsavart, nindent=0):
             continue
 
         is_vf = label == "VF"
+        is_banana = label == "BANANA"
         idx_ncoils = N_VF if is_vf else 1
+        if is_banana:
+            curve = coils[idx].curve
+            order = curve.order
+            nqpts = curve.quadpoints.size
+            indent_print(f"Order:                {order}", nindent=nindent+4)
+            indent_print(f"Number of quadpoints: {nqpts}", nindent=nindent+4)
         for icoil in range(idx, idx+idx_ncoils):
             coil = coils[icoil]
             current = coil.current
@@ -72,7 +86,7 @@ def print_biotsavart_metrics(biotsavart, nindent=0):
             Z0 = z.mean()
             prefix = f"[Coil {icoil-idx+1:>2} | (R0, Z0) = ({R0:.3f}, {Z0:>6.3f}) m] " if is_vf else ""
             indent_print(f"{prefix}Current = {curr_ka:5.1f} kA ({'un' if unfixed else ''}fixed)", nindent=nindent+4)
-        if label != "BANANA": continue
+        if not is_banana: continue
         curve = coil.curve
         R0, a = find_winding_surface(curve)
         curves = [coil.curve for coil in coils[idx:idx+N_BANANA]]
@@ -169,16 +183,19 @@ def print_curve_surface_metrics(biotsavart, surface, nindent=0):
 def build_parser():
     parser = argparse.ArgumentParser(description="Print parameters of SIMSOPT objects from JSON files.")
     parser.add_argument("json_files", nargs="+", help="JSON files containing SIMSOPT objects.")
+    parser.add_argument("--save-file", type=str, default=None,
+                        help="If filepath is provided, save output to file. Default is None (no saving).")
     return parser
 
 def main(argv=None):
+    global savefile
     args = build_parser().parse_args(argv)
     files = args.json_files
-
+    savefile = args.save_file
     for file in files:
         obj = load(file)
-        print(f"File: {os.path.abspath(file)}")
-        print(f"File object class: {type(obj)}")
+        _print(f"File: {os.path.abspath(file)}")
+        _print(f"File object class: {type(obj)}")
         if isinstance(obj, BiotSavart):
             print_biotsavart_metrics(obj, nindent=0)
         elif isinstance(obj, Surface):
@@ -186,7 +203,7 @@ def main(argv=None):
         elif isinstance(obj, BoozerSurface):
             print_boozersurface_metrics(obj, nindent=0)
         else:
-            print("Unknown object class.")
+            _print("Unknown object class.")
 
     if len(files) == 2:
         obj1 = load(files[0])

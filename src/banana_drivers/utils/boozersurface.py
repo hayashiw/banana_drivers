@@ -1,107 +1,128 @@
 from simsopt._core import load
-from simsopt.field import BiotSavart
-from simsopt.geo import BoozerSurface, Surface, SurfaceXYZTensorFourier, Volume
+from simsopt.field import BiotSavart, Coil
+from simsopt.geo import (
+    BoozerSurface,
+    SurfaceRZFourier,
+    SurfaceXYZTensorFourier,
+    Volume
+)
 
-from .surface import resize_surface
-from ..hardware import BANANA_IDX, PROXY_IDX
+from ..hardware import TF_IDX, BANANA_IDX, PROXY_IDX, VF_IDX
+from .biotsavart import rebuild_biotsavart
+from .constants import MU0
+from .surface import convert_rz_to_xyztensor, convert_to_boozerexact_surface, rebuild_surface
 
-DEFAULT_CONSTRAINT_WEIGHT = 1e3
-
-from numpy import linspace, pi
-MU0 = pi * 4e-7
+OPTION = dict(verbose=True)
 
 def build_boozersurface(
-    biotsavart: BiotSavart,
-    init_surf: Surface,
-    constraint_weight: float = DEFAULT_CONSTRAINT_WEIGHT,
-    plasma_current: float = 0.0,
+    biotsavart: BiotSavart | str,
+    surface: SurfaceRZFourier | SurfaceXYZTensorFourier | str,
+    constraint_weight: float | None = None,
+    targetlabel: float | None = None,
+    proxy_coil_from_surface: bool = True,
+    proxy_coil: Coil | None = None,
 ) -> BoozerSurface:
-    mpol, ntor, nfp = init_surf.mpol, init_surf.ntor, init_surf.nfp
-    surface = SurfaceXYZTensorFourier(
-        mpol=mpol,
-        ntor=ntor,
-        nfp=nfp,
-        stellsym=init_surf.stellsym,
-        quadpoints_phi=init_surf.quadpoints_phi,
-        quadpoints_theta=init_surf.quadpoints_theta,
-    )
-    surface.least_squares_fit(init_surf.gamma())
+    if isinstance(biotsavart, str):
+        biotsavart = load(biotsavart)
+    if isinstance(surface, str):
+        surface = load(surface)
+    if constraint_weight == 0: constraint_weight = None
 
-    use_boozer_exact = (constraint_weight == 0.0) or (constraint_weight is None)
-    if use_boozer_exact:
-        quadpoints_phi = linspace(0, 1/nfp, 2*ntor+1, endpoint=True)
-        quadpoints_theta = linspace(0, 1, 2*mpol+1, endpoint=True)
-        booz_exact_surface = SurfaceXYZTensorFourier(
-            mpol=mpol,
-            ntor=ntor,
-            nfp=nfp,
-            stellsym=init_surf.stellsym,
-            quadpoints_phi=quadpoints_phi,
-            quadpoints_theta=quadpoints_theta,
-        )
-        booz_exact_surface.x = surface.x.copy()
-        surface = booz_exact_surface
-    
-    targetlabel = surface.volume()
+    if constraint_weight is None:
+        surface = convert_to_boozerexact_surface(surface)
+    else:
+        surface = convert_rz_to_xyztensor(surface)
+
+    if proxy_coil is not None: proxy_coil_from_surface = False
+    if proxy_coil_from_surface:
+        proxy_rz = (surface.major_radius(), 0.0)
+        biotsavart = rebuild_biotsavart(biotsavart, proxy_rz=proxy_rz)
+
+    if proxy_coil is None: proxy_coil = biotsavart.coils[PROXY_IDX]
+    current = proxy_coil.current.get_value()
+    I = current * MU0
 
     label = Volume(surface)
-    boozersurface = BoozerSurface(
-        biotsavart,
-        surface,
-        label,
-        targetlabel,
-        constraint_weight=constraint_weight,
-        I=plasma_current,
-        options=dict(
-            verbose=True,
-        )
-    )
+    if targetlabel is None: targetlabel = surface.volume()
+    boozersurface = BoozerSurface(biotsavart, surface, label, targetlabel, constraint_weight=constraint_weight, options=OPTION, I=I)
     return boozersurface
 
-def load_boozersurface_from_biotsavart(
-    init_biotsavart: str | BiotSavart,
-    init_surface: str | Surface,
+def rebuild_boozersurface(
+    boozersurface: BoozerSurface | str,
+    *,
+    constraint_weight: float | None = None, # If None, inherits from boozersurface. Use 0 to set BoozerExact.
+    targetlabel: float | None = None,
+    proxy_coil_from_surface: bool = True,
+    tf_current_ka: float | None = None,
+    tf_fix_current: bool | None = None,
+    banana_current_ka: float | None = None,
+    banana_fix_current: bool | None = None,
+    banana_dofs: dict[str, float] | None = None,
+    banana_order: int | None = None,
+    banana_qpts_per_order: int | None = None,
+    proxy_current_ka : float | None = None,
+    proxy_rz : tuple[float, float] | None = None,
+    vf_current_ka: float | None = None,
+    vf_fix_current: bool | None = None,
+    surf_range: str | None = None,
     mpol: int | None = None,
     ntor: int | None = None,
-    constraint_weight: float = DEFAULT_CONSTRAINT_WEIGHT,
-) -> BoozerSurface:
-    if isinstance(init_biotsavart, str):
-        init_biotsavart = load(init_biotsavart)
-    if isinstance(init_surface, str):
-        init_surface = load(init_surface)
-
-    rebuild_surface = False
-    if mpol is None:
-        mpol = init_surface.mpol
-        rebuild_surface = True
-    if ntor is None:
-        ntor = init_surface.ntor
-        rebuild_surface = True
-    if rebuild_surface:
-        surface = resize_surface(init_surface, "field period", mpol=mpol, ntor=ntor)
-    else:
-        surface = init_surface
-
-    biotsavart = init_biotsavart
-    proxy_coil = biotsavart.coils[PROXY_IDX]
-    proxy_current = proxy_coil.current.get_value()
-    I = proxy_current * MU0
-
-    return build_boozersurface(
-        biotsavart, surface, constraint_weight=constraint_weight, plasma_current=I
-    )
-
-def load_boozersurface_from_file(
-    boozersurface: str | BoozerSurface,
-    mpol: int | None = None,
-    ntor: int | None = None,
-    constraint_weight: float = DEFAULT_CONSTRAINT_WEIGHT,
+    nphi: int | None = None,
+    ntheta: int | None = None,
 ) -> BoozerSurface:
     if isinstance(boozersurface, str):
         boozersurface = load(boozersurface)
-
     biotsavart = boozersurface.biotsavart
     surface = boozersurface.surface
-    return load_boozersurface_from_biotsavart(
-        biotsavart, surface, mpol=mpol, ntor=ntor, constraint_weight=constraint_weight
+    
+    if constraint_weight is None:
+        constraint_weight = boozersurface.constraint_weight
+        use_boozer_exact = True
+    elif constraint_weight == 0:
+        constraint_weight = None
+        use_boozer_exact = False
+
+    new_mpol = mpol or surface.mpol
+    new_ntor = ntor or surface.ntor
+    if use_boozer_exact:
+        new_ntheta = 2*new_mpol+1
+        new_nphi = 2*new_ntor+1
+    else:
+        new_ntheta = ntheta or surface.ntheta
+        new_nphi = nphi or surface.nphi
+
+    new_proxy_rz = (surface.major_radius(), 0.0) if proxy_coil_from_surface else proxy_rz
+
+    surface_kwargs = dict(
+        surf_range=surf_range,
+        mpol=new_mpol,
+        ntor=new_ntor,
+        ntheta=new_ntheta,
+        nphi=new_nphi,
     )
+    new_surface = rebuild_surface(surface, **surface_kwargs)
+
+    biotsavart_kwargs = dict(
+        tf_current_ka=tf_current_ka,
+        tf_fix_current=tf_fix_current,
+        banana_current_ka=banana_current_ka,
+        banana_fix_current=banana_fix_current,
+        banana_dofs=banana_dofs,
+        banana_order=banana_order,
+        banana_qpts_per_order=banana_qpts_per_order,
+        proxy_current_ka=proxy_current_ka,
+        proxy_rz=new_proxy_rz,
+        vf_current_ka=vf_current_ka,
+        vf_fix_current=vf_fix_current,
+    )
+    new_biotsavart = rebuild_biotsavart(biotsavart, **biotsavart_kwargs)
+
+    proxy_coil = new_biotsavart.coils[PROXY_IDX]
+    current = proxy_coil.current.get_value()
+    I = current * MU0
+
+    label = Volume(new_surface)
+    if targetlabel is None: targetlabel = new_surface.volume()
+    new_boozersurface = BoozerSurface(new_biotsavart, new_surface, label=label, targetlabel=targetlabel, constraint_weight=constraint_weight, options=OPTION, I=I)
+
+    return new_boozersurface

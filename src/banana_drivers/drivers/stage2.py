@@ -11,6 +11,7 @@ EASTERN = ZoneInfo("America/New_York")
 
 from scipy.optimize import minimize
 
+from simsopt._core import load
 from simsopt.geo import (
     BoozerSurface,
     CurveLength,
@@ -20,62 +21,58 @@ from simsopt.geo import (
 )
 from simsopt.objectives import SquaredFlux, QuadraticPenalty
 
-from banana_drivers.paths import STAGE2_CONFIG
-from banana_drivers.hardware import (
+from ..paths import STAGE2_CONFIG
+from ..hardware import (
     hardware_limits,
     hbt_banana_ws,
     N_BANANA,
     TF_IDX,
     BANANA_IDX,
 )
-from banana_drivers.utils.cli import (
-    check_current_limits,
-    coil_current_parser,
-    coil_geometry_parser,
-    common_parser,
-    resolve_output_tag,
-    input_source_parser,
+from ..utils.cli import (
+    tf_coil_parser,
+    banana_coil_parser,
+    proxy_coil_parser,
+    vf_coil_parser,
+    surface_resolution_parser,
+    objectives_parser,
 )
-from banana_drivers.utils.preprocess import process_args
-from banana_drivers.utils.io import DriverLog
-from banana_drivers.objectives.cwsobjectives import (
+# from ..utils.preprocess import process_args
+from ..utils.io import DriverLog, save_to_json
+from ..utils.surface import convert_rz_to_xyztensor
+from ..objectives.cwsobjectives import (
     PoloidalExtent,
     ProjectedEllipseWidth,
     CurveSelfIntersect,
 )
-from banana_drivers.objectives.currentobjectives import ScaledCurrentWrapper
+from ..objectives.currentobjectives import ScaledCurrentWrapper
 
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Stage 2 — coil-only optimization of the HBT-EP banana coil set.",
         parents=[
-            coil_current_parser(defaults_none=True),
-            coil_geometry_parser(defaults_none=True),
-            common_parser(),
-            input_source_parser(),
+            tf_coil_parser(inherit=True),
+            banana_coil_parser(inherit=True),
+            proxy_coil_parser(inherit=True),
+            vf_coil_parser(inherit=True),
+            surface_resolution_parser(inherit=True),
+            objectives_parser(),
         ],
     )
-    parser.add_argument("--build", action="store_true",
-                   help="Build all coil groups from the coil args; ignore the "
-                        "background BiotSavart and require every coil arg.")
+    parser.add_argument("boozersurface_file", type=str,
+                        help="Input BoozerSurface file. A BoozerSurface object is used for convenience since it stores a BiotSavart object and Surface object.")
     parser.add_argument("--config", type=str, default=STAGE2_CONFIG,
                         help=f"Stage 2 config YAML. Default: {STAGE2_CONFIG}.")
     parser.add_argument("--maxiter", type=int, default=1500,
                         help="Optimizer iteration cap. Default: 1500.")
-    parser.add_argument("--no-min-length", action="store_true",
-                        help="If True, skip the coil length minimum penalty. Default: False.")
-    parser.add_argument("--no-width", action="store_true",
-                        help="If True, skip the coil width penalties. Default: False.")
-    parser.add_argument("--no-current", action="store_true",
-                        help="If True, skip the coil current penalties. Default: False.")
     parser.add_argument("--save-iter-dir", type=str, default=None,
                         help="Directory to save iteration data. Default: None.")
     parser.add_argument("--save-iter-freq", type=int, default=1,
                         help="Frequency to save iteration data. Default: 1.")
     parser.add_argument("--vcasing-file", type=str, default=None,
                         help="Virtual casing netCDF file.")
-    parser.add_argument("--max-curvature-override", type=float, default=None,
-                        help="Override the maximum curvature for the banana coils. Default: None.")
+    parser.add_argument("--out-dir", type=str, default="./",
+                        help="Output directory. Default: ./")
     return parser
 
 def load_config(path):
@@ -225,34 +222,22 @@ def build_objective(biotsavart, surface, config, log, args=None):
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    prefix, suffix = resolve_output_tag(args)
-    if len(prefix): prefix = prefix.replace("init", "opt") + "_"
-    if len(suffix): suffix = "_" + suffix.replace("init", "opt")
-    check_current_limits(args, parser)
+    boozersurface_file = args.boozersurface_file
+    
+    biotsavart_tag, surface_tag = os.path.basename(boozersurface_file).split(".")[:2]
 
-    overwrite = args.overwrite
-    if overwrite:
-        pass
-    else:
-        find_files = glob.glob(os.path.join(args.output_dir, f"{prefix}biotsavart{suffix}*.json"))
-        if len(find_files) == 0:
-            suffix += ".0"
-        else:
-            version_idx = 0
-            for path in find_files:
-                base = os.path.basename(path).replace(".json", "")
-                if "." in base:
-                    idx_str = base.split(".")[-1]
-                    try:
-                        idx = int(idx_str)
-                        version_idx = max(version_idx, idx+1)
-                    except ValueError:
-                        pass
-            suffix += f".{version_idx}"
+    version_number = 0
+    find_files = glob.glob(os.path.join(args.out_dir, f"{biotsavart_tag}.{surface_tag}.boozersurface.stage2_opt.v*.json"))
+    for file in find_files:
+        file_split = os.path.basename(file).split(".")
+        for ipos, key in enumerate(file_split):
+            if key == "stage2_opt":
+                iver = int(file_split[ipos+1][1:])
+                version_number = max(version_number, iver + 1)
 
     config = load_config(args.config)
-    os.makedirs(args.output_dir, exist_ok=True)
-    logfile = os.path.join(args.output_dir, f"{prefix}log_stage2{suffix}.txt")
+    os.makedirs(args.out_dir, exist_ok=True)
+    logfile = os.path.join(args.out_dir, f"{biotsavart_tag}.{surface_tag}.log_stage2.v{version_number}.txt")
     log = DriverLog(logfile)
     log(f"Log file → {logfile}")
     start_time = time.monotonic()
@@ -263,22 +248,24 @@ def main(argv=None):
     for key, val in vars(args).items():
         log(f"{key}: {val}")
 
-    biotsavart, surface = process_args(args)
+    boozersurface = load(boozersurface_file)
+    biotsavart = boozersurface.biotsavart
+    surface = boozersurface.surface
 
     JF, objectives = build_objective(biotsavart, surface, config, log, args=args)
-    tracker = dict(iter=0, eval=0)
+    tracker = dict(iters=0, evals=0)
 
     def log_row():
-        vals = [tracker["iter"], tracker["eval"], *(f() for f in objectives.values())]
+        vals = [tracker["iters"], tracker["evals"], *(f() for f in objectives.values())]
         log(",".join(f"{v}" for v in vals), data=True)
-    log(",".join(["iter", "eval", *objectives]), data=True)
+    log(",".join(["iters", "evals", *objectives]), data=True)
     log_row()
 
     def fun(x):
         JF.x = x
         J = JF.J()
         dJ = JF.dJ()
-        tracker["eval"] += 1
+        tracker["evals"] += 1
         log_row()
         return J, dJ
     
@@ -287,15 +274,14 @@ def main(argv=None):
         os.makedirs(args.save_iter_dir, exist_ok=True)
         save_iter_freq = max(1, args.save_iter_freq)
         save_iters = True
-        iter_savefile = os.path.join(args.save_iter_dir, f"{prefix}biotsavart{suffix}_iter{tracker['iter']}.json")
-        biotsavart.save(iter_savefile)
+        iter_savefile = save_to_json(biotsavart, biotsavart_tag, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
+        
     def callback(x):
-        tracker["iter"] += 1
-        tracker["eval"] = 0
+        tracker["iters"] += 1
+        tracker["evals"] = 0
         log_row()
-        if save_iters and tracker["iter"] % save_iter_freq == 0:
-            iter_savefile = os.path.join(args.save_iter_dir, f"{prefix}biotsavart{suffix}_iter{tracker['iter']}.json")
-            biotsavart.save(iter_savefile)
+        if save_iters and tracker["iters"] % save_iter_freq == 0:
+            iter_savefile = save_to_json(biotsavart, biotsavart_tag, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
 
     result = minimize(
         fun,
@@ -311,20 +297,15 @@ def main(argv=None):
     )
     log(result.message)
 
-    savefile = os.path.join(args.output_dir, f"{prefix}biotsavart{suffix}.json")
-    biotsavart.save(savefile)
+    savefile = save_to_json(biotsavart, biotsavart_tag, version_number=version_number, out_dir=args.out_dir) 
     log(f"Saved BiotSavart → {savefile}")
 
-    if "opt" in suffix:
-        suffix = suffix.replace("opt", "init")
-    else:
-        suffix = "_init" + suffix
-    savefile = os.path.join(args.output_dir, f"{prefix}boozersurface{suffix}.json")
     label = Volume(surface)
     targetlabel = surface.volume()
+    surface_xyz = convert_rz_to_xyztensor(surface)
     boozersurface = BoozerSurface(
-        biotsavart, surface, label, targetlabel, constraint_weight=1e2)
-    boozersurface.save(savefile)
+        biotsavart, surface_xyz, label, targetlabel, constraint_weight=1e2)
+    savefile = save_to_json(boozersurface, biotsavart_tag, prefix2=surface_tag, init_opt="stage2_opt", version_number=version_number, out_dir=args.out_dir)
     log(f"Saved BoozerSurface → {savefile}")
 
     end_time = time.monotonic()

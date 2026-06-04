@@ -13,6 +13,7 @@ EASTERN = ZoneInfo("America/New_York")
 
 from scipy.optimize import minimize
 
+from simsopt._core import load
 from simsopt.geo import (
     BoozerResidual,
     CurveLength,
@@ -24,8 +25,8 @@ from simsopt.geo import (
 )
 from simsopt.objectives import QuadraticPenalty
 
-from banana_drivers.paths import SINGLESTAGE_CONFIG
-from banana_drivers.hardware import (
+from ..paths import SINGLESTAGE_CONFIG
+from ..hardware import (
     hardware_limits,
     hbt_banana_ws,
     N_TF,
@@ -33,18 +34,16 @@ from banana_drivers.hardware import (
     TF_IDX,
     BANANA_IDX,
 )
-from banana_drivers.utils.cli import (
-    common_parser,
-    resolve_output_tag,
-)
-from banana_drivers.utils.io import DriverLog, stdout_to_log
-from banana_drivers.objectives.cwsobjectives import (
+from ..objectives.cwsobjectives import (
     PoloidalExtent,
     ProjectedEllipseWidth,
     CurveSelfIntersect,
 )
-from banana_drivers.objectives.currentobjectives import ScaledCurrentWrapper
-from banana_drivers.utils.boozersurface import load_boozersurface_from_file, MU0
+from ..objectives.currentobjectives import ScaledCurrentWrapper
+from ..utils.boozersurface import build_boozersurface
+from ..utils.cli import resolve_filename
+from ..utils.constants import MU0
+from ..utils.io import DriverLog, stdout_to_log, save_to_json
 
 BFGS_PAT   = re.compile(r"\b(?:L-BFGS-B|BFGS|LBFGS) solve - .*\biter=(\d+)")
 NEWTON_PAT = re.compile(r"\bNEWTON solve - .*\biter=(\d+)")
@@ -61,10 +60,7 @@ def make_solver_iter_tap(solver_iters):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Singlestage joint coil + surface optimization.",
-        parents=[
-            common_parser(),
-        ],
+        description="Singlestage joint coil + surface optimization."
     )
     parser.add_argument("boozersurface_file", type=str,
                         help="BoozerSurface JSON (stage 2 output).")
@@ -87,6 +83,8 @@ def build_parser():
                         help="Directory to save iteration data. Default: None.")
     parser.add_argument("--save-iter-freq", type=int, default=1,
                         help="Frequency to save iteration data. Default: 1.")
+    parser.add_argument("--out-dir", type=str, default="./",
+                        help="Output directory. Default: ./")
     return parser
 
 def load_config(path):
@@ -145,16 +143,16 @@ def build_objective(boozersurface, config, log, iota_target, args=None):
         Jbananacurrmax = QuadraticPenalty(Jbananacurr, max(map(abs, hardware_limits.banana_current_ka_limits))*1e3, "max")
 
     weight_nonqs = config["weights"]["nonqs"]
-    weight_bres = config["weights"]["bres"]
-    weight_iota = config["weights"]["iota"]
-    weight_len = config["weights"]["length"]
-    weight_ccd = config["weights"]["ccdist"]
-    weight_csd = config["weights"]["csdist"]
-    weight_curv = config["weights"]["curvature"]
-    weight_pol = config["weights"]["poloidal"]
+    weight_bres  = config["weights"]["bres"]
+    weight_iota  = config["weights"]["iota"]
+    weight_len   = config["weights"]["length"]
+    weight_ccd   = config["weights"]["ccdist"]
+    weight_csd   = config["weights"]["csdist"]
+    weight_curv  = config["weights"]["curvature"]
+    weight_pol   = config["weights"]["poloidal"]
     weight_width = config["weights"]["width"]
-    weight_self = config["weights"]["selfint"]
-    weight_curr = config["weights"]["currents"]
+    weight_self  = config["weights"]["selfint"]
+    weight_curr  = config["weights"]["currents"]
 
     log("")
     log("Targets:")
@@ -256,33 +254,18 @@ def build_objective(boozersurface, config, log, iota_target, args=None):
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    prefix, suffix = resolve_output_tag(args)
-    if len(prefix): prefix = prefix.replace("init", "opt") + "_"
-    if len(suffix): suffix = "_" + suffix.replace("init", "opt")
 
-    overwrite = args.overwrite
-    if overwrite:
-        pass
-    else:
-        find_files = glob.glob(os.path.join(args.output_dir, f"{prefix}boozersurface{suffix}*.json"))
-        if len(find_files) == 0:
-            suffix += ".0"
-        else:
-            version_idx = 0
-            for path in find_files:
-                base = os.path.basename(path).replace(".json", "")
-                if "." in base:
-                    idx_str = base.split(".")[-1]
-                    try:
-                        idx = int(idx_str)
-                        version_idx = max(version_idx, idx+1)
-                    except ValueError:
-                        pass
-            suffix += f".{version_idx}"
+    boozersurface_file = args.boozersurface_file
+    _, prefix1, prefix2, *_ = resolve_filename(boozersurface_file)
+
+    version_number = 0
+    find_files = glob.glob(os.path.join(args.out_dir, f"{prefix1}.{prefix2}.boozersurface.opt.v*.json"))
+    for file in find_files:
+        version_number = max(version_number, resolve_filename(file)[3]+1)
 
     config = load_config(args.config)
-    os.makedirs(args.output_dir, exist_ok=True)
-    logfile = os.path.join(args.output_dir, f"{prefix}log_singlestage{suffix}.txt")
+    os.makedirs(args.out_dir, exist_ok=True)
+    logfile = os.path.join(args.out_dir, f"{prefix1}.{prefix2}.log_singlestage.v{version_number}.txt")
     log = DriverLog(logfile)
     log(f"Log file → {logfile}")
     start_time = time.monotonic()
@@ -296,8 +279,10 @@ def main(argv=None):
     constraint_weight = args.constraint_weight
     if constraint_weight == 0: constraint_weight = None
     use_boozer_ls = constraint_weight is not None
-    boozersurface = load_boozersurface_from_file(
-        args.boozersurface_file, constraint_weight=constraint_weight)
+    init_boozersurface = load(boozersurface_file)
+    biotsavart = init_boozersurface.biotsavart
+    surface = init_boozersurface.surface
+    boozersurface = build_boozersurface(biotsavart, surface, constraint_weight=constraint_weight)
 
     if use_boozer_ls:
         solver_iters = dict(bfgs_nit=0, newton_nit=0)
@@ -331,8 +316,8 @@ def main(argv=None):
     
     JF, objectives = build_objective(boozersurface, config, log, args.iota, args=args)
     tracker = dict(
-        iter=0,
-        eval=0,
+        iters=0,
+        evals=0,
         J=JF.J(),
         dJ=JF.dJ().copy(),
         sdofs=boozersurface.surface.x.copy(),
@@ -347,12 +332,12 @@ def main(argv=None):
         iter_vals = list(tracker["solver_iters"].values())
         vals = [
             time.monotonic() - start_time,
-            tracker["iter"],
-            tracker["eval"],
+            tracker["iters"],
+            tracker["evals"],
             *iter_vals,
             *(f() for f in objectives.values())]
         log(",".join(f"{v}" for v in vals), data=True)
-    log(",".join(["time", "iter", "eval", *nit_keys, *objectives]), data=True)
+    log(",".join(["time", "iters", "evals", *nit_keys, *objectives]), data=True)
     log_row()
 
     def fun(x):
@@ -388,7 +373,7 @@ def main(argv=None):
             boozersurface.res["iota"] = tracker["iota"]
             boozersurface.res["G"] = tracker["G"]
 
-        tracker["eval"] += 1
+        tracker["evals"] += 1
         log_row()
         return J, dJ
     
@@ -397,20 +382,19 @@ def main(argv=None):
         os.makedirs(args.save_iter_dir, exist_ok=True)
         save_iter_freq = max(1, args.save_iter_freq)
         save_iters = True
-        iter_savefile = os.path.join(args.save_iter_dir, f"{prefix}boozersurface{suffix}_iter{tracker['iter']}.json")
-        boozersurface.save(iter_savefile)
+        iter_savefile = save_to_json(boozersurface, prefix1, prefix2=prefix2, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
+
     def callback(x):
-        tracker["iter"] += 1
-        tracker["eval"] = 0
+        tracker["iters"] += 1
+        tracker["evals"] = 0
         tracker["sdofs"] = boozersurface.surface.x.copy()
         tracker["iota"] = boozersurface.res["iota"]
         tracker["G"] = boozersurface.res["G"]
         tracker["J"] = JF.J()
         tracker["dJ"] = JF.dJ().copy()
         log_row()
-        if save_iters and tracker["iter"] % save_iter_freq == 0:
-            iter_savefile = os.path.join(args.save_iter_dir, f"{prefix}boozersurface{suffix}_iter{tracker['iter']}.json")
-            boozersurface.save(iter_savefile)
+        if save_iters and tracker["iters"] % save_iter_freq == 0:
+            iter_savefile = save_to_json(boozersurface, prefix1, prefix2=prefix2, version_number=version_number, iter_number=tracker["iters"], out_dir=args.save_iter_dir)
 
     result = minimize(
         fun,
@@ -426,8 +410,8 @@ def main(argv=None):
     )
     log(result.message)
 
-    savefile = os.path.join(args.output_dir, f"{prefix}boozersurface{suffix}.json")
-    boozersurface.save(savefile)
+
+    savefile = save_to_json(boozersurface, prefix1, prefix2=prefix2, version_number=version_number, out_dir=args.out_dir)
     log(f"Saved BoozerSurface → {savefile}")
     end_time = time.monotonic()
     run_time = timedelta(seconds=end_time - start_time)

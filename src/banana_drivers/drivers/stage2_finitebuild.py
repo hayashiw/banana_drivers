@@ -1,3 +1,6 @@
+# TODO: Just wire this into regular stage 2 via a command-line flag
+raise Exception("This module is deprecated. Use the regular stage 2.")
+
 import argparse
 import glob
 import os
