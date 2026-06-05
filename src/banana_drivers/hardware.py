@@ -104,3 +104,4 @@ BANANA_IDX = N_TF
 PROXY_IDX  = N_TF + N_BANANA
 VF_IDX     = N_TF + N_BANANA + N_PROXY
 N_COILS    = VF_IDX + N_VF
+N_FB_COILS = N_TF + N_PROXY + N_VF + N_BANANA*hbt_banana_fb.numfilaments

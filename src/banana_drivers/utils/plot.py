@@ -122,12 +122,25 @@ def plotly_coils(biotsavart, fig=None, width=6):
             gamma = coil.curve.gamma()
             x, y, z = np.append(gamma, gamma[:1], axis=0).T
             fig.add_trace(go.Scatter3d(
-                x=x, y=y, z=z, mode="lines", line=dict(width=width, color=color)))
+                x=x, y=y, z=z, mode="lines",
+                showlegend=False,
+                line=dict(width=width, color=color)
+            ))
     return fig
 
-def plotly_surface(surface, fig=None, surfacecolors=None, colorscale="Viridis"):
+def plotly_surface(surface, fig=None, biotsavart=None, surfacecolors="Bdotn_norm", colorscale="Viridis"):
     if fig is None:
         fig = go.Figure()
+
+    if biotsavart is not None:
+        assert surfacecolors in ["modB", "Bdotn_norm"], f"Expected surfacecolors in ['modB', 'Bdotn_norm'], got {surfacecolors}"
+        biotsavart.set_points(surface.gamma().reshape(-1, 3))
+        B = biotsavart.B().reshape(surface.gamma().shape)
+        modB = np.linalg.norm(B, axis=-1)
+        if surfacecolors == "modB":
+            surfacecolors = modB
+        elif surfacecolors == "Bdotn_norm":
+            surfacecolors = np.sum(B * surface.unitnormal(), axis=-1) / modB
 
     x, y, z = surface.gamma().T
     if surfacecolors is None:

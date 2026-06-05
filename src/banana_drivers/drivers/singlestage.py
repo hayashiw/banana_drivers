@@ -413,7 +413,6 @@ def main(argv=None):
     )
     log(result.message)
 
-
     savefile = save_to_json(boozersurface, biotsavart_tag, prefix2=surface_tag, version_number=version_number, init_opt="singlestage_opt", out_dir=args.out_dir)
     log(f"Saved BoozerSurface → {savefile}")
     end_time = time.monotonic()

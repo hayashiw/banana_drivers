@@ -7,7 +7,7 @@ from simsopt.geo import (
     Volume
 )
 
-from ..hardware import TF_IDX, BANANA_IDX, PROXY_IDX, VF_IDX
+from ..hardware import PROXY_IDX
 from .biotsavart import rebuild_biotsavart
 from .constants import MU0
 from .surface import convert_rz_to_xyztensor, convert_to_boozerexact_surface, rebuild_surface
@@ -77,10 +77,9 @@ def rebuild_boozersurface(
     
     if constraint_weight is None:
         constraint_weight = boozersurface.constraint_weight
-        use_boozer_exact = True
     elif constraint_weight == 0:
         constraint_weight = None
-        use_boozer_exact = False
+    use_boozer_exact = (constraint_weight is None)
 
     new_mpol = mpol or surface.mpol
     new_ntor = ntor or surface.ntor

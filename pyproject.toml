@@ -26,6 +26,7 @@ banana-flip-surfacerzfourier = "banana_drivers.scripts.flip_surfacerzfourier:mai
 # banana-generate-biotsavart = "banana_drivers.scripts.generate_biotsavart:main"
 banana-generate-boozersurface-finitebuild = "banana_drivers.scripts.generate_boozersurface_finitebuild:main"
 # banana-generate-biotsavart-from-dofs-file = "banana_drivers.scripts.generate_biotsavart_from_dofs_file:main"
+banana-generate-coil-txt-files = "banana_drivers.scripts.generate_coil_txt_files:main"
 banana-initialize-boozersurface = "banana_drivers.scripts.initialize_boozersurface:main"
 banana-initialize-local = "banana_drivers.scripts.initialize_local:main"
 banana-plot-modB-Bdotn = "banana_drivers.scripts.plot_modB_Bdotn:main"

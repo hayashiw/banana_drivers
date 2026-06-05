@@ -11,9 +11,14 @@ from .coils import (
     extract_banana_dofs,
 )
 from ..hardware import (
+    hbt_shell, hbt_banana_ws,
     TF_IDX, BANANA_IDX, PROXY_IDX, VF_IDX,
     N_TF, N_BANANA, N_PROXY, N_VF, N_COILS
 )
+
+DEFAULT_FROM_WS = True
+DEFAULT_PROXY_R = hbt_banana_ws.major_radius if DEFAULT_FROM_WS else hbt_shell.major_radius
+DEFAULT_PROXY_RZ = (DEFAULT_PROXY_R, 0.0)
 
 def build_biotsavart(
     tf_current_ka: float,
@@ -67,9 +72,12 @@ def rebuild_biotsavart(
     err_msg = \
         f"Number of coils mismatch: " \
         f"expected TF ({N_TF}) + BANANA ({N_BANANA}) " \
-        f"+ PROXY ({N_PROXY}) + VF ({N_VF}) = {N_COILS}, " \
+        f"+ PROXY ({N_PROXY}) + VF ({N_VF}) = {N_COILS} or " \
+        f"expected TF ({N_TF}) + BANANA ({N_BANANA}) = {N_TF + N_BANANA}, " \
         f"got {ncoils}"    
-    assert ncoils == N_COILS, err_msg
+    assert (ncoils == N_COILS) or (ncoils == (N_TF + N_BANANA)), err_msg
+
+    add_proxy_vf = ncoils == (N_TF + N_BANANA)
 
     tf_coil = coils[TF_IDX]
     if tf_current_ka is None: tf_current_ka = tf_coil.current.get_value()/1e3
@@ -82,18 +90,26 @@ def rebuild_biotsavart(
     if banana_dofs is None: banana_dofs = extract_banana_dofs(banana_coil.curve)
     if banana_qpts_per_order is None: banana_qpts_per_order = banana_coil.curve.quadpoints.size // banana_order
 
-    proxy_coil = coils[PROXY_IDX]
-    if proxy_current_ka is None: proxy_current_ka = proxy_coil.current.get_value()/1e3
-    if proxy_rz is None:
-        x, y, z = proxy_coil.curve.gamma().T
-        r = np.sqrt(x**2 + y**2)
-        proxy_R = r.mean()
-        proxy_Z = z.mean()
-        proxy_rz = (proxy_R, proxy_Z)
+    if add_proxy_vf:
+        if proxy_current_ka is None: proxy_current_ka = 0.0
+        if proxy_rz is None:
+            proxy_rz = DEFAULT_PROXY_RZ
 
-    vf_coil = coils[VF_IDX]
-    if vf_current_ka is None: vf_current_ka = vf_coil.current.get_value()/1e3
-    if vf_fix_current is None: vf_fix_current = (len(vf_coil.current.x) == 0)
+        if vf_current_ka is None: vf_current_ka = 0.0
+        if vf_fix_current is None: vf_fix_current = True
+    else:
+        proxy_coil = coils[PROXY_IDX]
+        if proxy_current_ka is None: proxy_current_ka = proxy_coil.current.get_value()/1e3
+        if proxy_rz is None:
+            x, y, z = proxy_coil.curve.gamma().T
+            r = np.sqrt(x**2 + y**2)
+            proxy_R = r.mean()
+            proxy_Z = z.mean()
+            proxy_rz = (proxy_R, proxy_Z)
+
+        vf_coil = coils[VF_IDX]
+        if vf_current_ka is None: vf_current_ka = vf_coil.current.get_value()/1e3
+        if vf_fix_current is None: vf_fix_current = (len(vf_coil.current.x) == 0)
 
     return build_biotsavart(
         tf_current_ka=tf_current_ka,
