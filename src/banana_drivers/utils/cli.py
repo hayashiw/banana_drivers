@@ -216,7 +216,12 @@ def write_config_yaml(filename, args):
 # overrides are from the config file
 # args are the collection that is actually passed to the driver
 def process_driver_args(args) -> dict:
-    inputs = {k:v for k, v in vars(args).items() if v is not None}
+    inputs = dict()
+    for key, val in vars(args).items():
+        if val is not None:
+            if isinstance(val, list) and len(val) == 0:
+                continue # skip empty lists since they may have defaults in the config file
+            inputs[key] = val
     if "config_file" in inputs:
         overrides = load_yaml(inputs["config_file"])
         if "config_file" in overrides: # avoid nesting configs
