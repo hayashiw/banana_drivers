@@ -12,6 +12,7 @@ DEFAULT_SIGN_G = -1
 DEFAULT_MAXITER = 1500
 DEFAULT_ITER_FREQ = 10
 DEFAULT_OUT_DIR = "./"
+DEFAULT_TOL = 1e-15
 
 DRIVER_DEFAULTS = dict(
     sign_g=DEFAULT_SIGN_G,
@@ -19,6 +20,7 @@ DRIVER_DEFAULTS = dict(
     save_iter_dir=None,
     save_iter_freq=DEFAULT_ITER_FREQ,
     out_dir=DEFAULT_OUT_DIR,
+    tol=DEFAULT_TOL,
 )
 
 def tf_coil_parser():
@@ -195,6 +197,7 @@ def driver_parser(stage):
                    help=f"Output directory. Default: {DEFAULT_OUT_DIR}.")
     if is_stage2:
         p.add_argument("--vcasing-file", type=str, default=None, help="Virtual casing netCDF file.")
+        p.add_argument("--tol", type=float, default=None, help=f"Tolerance for optimization convergence. Default: {DEFAULT_TOL}.") # Only for stage 2 for now since singlestage has it's own (f|g)tol per mpol
     else:
         p.add_argument("iota", type=float, help="Target iota")
         p.add_argument("--sign-g", type=int, choices=[-1, 1], default=None, help=f"Sign of G for Boozer solve. Default: {DEFAULT_SIGN_G}.")

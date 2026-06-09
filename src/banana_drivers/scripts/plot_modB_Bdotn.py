@@ -17,7 +17,7 @@ def build_parser():
     )
     parser.add_argument("boozersurface_file", type=str, help="Path to the BoozerSurface JSON file.")
     parser.add_argument("-fb", "--finitebuild", action="store_true", help="Set to True if input is a finite build coil set.")
-    parser.add_argument("--dpi", type=int, default=150, help="DPI for the saved figure.")
+    parser.add_argument("--dpi", type=int, default=150, help="DPI for the saved figure. Default: 150.")
     return parser
 
 def main(argv=None):

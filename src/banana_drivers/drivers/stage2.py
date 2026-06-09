@@ -28,6 +28,7 @@ def main(argv=None):
     save_iter_freq     = driver_args["save_iter_freq"]
     maxiter            = driver_args["maxiter"]
     out_dir            = driver_args["out_dir"]
+    tol                = driver_args["tol"]
     os.makedirs(out_dir, exist_ok=True)
 
     tag_dict, boozersurface = update_boozersurface_tags_from_args(driver_args)
@@ -99,7 +100,7 @@ def main(argv=None):
         jac=True,
         method="L-BFGS-B",
         callback=callback,
-        tol=1e-15,
+        tol=tol,
         options=dict(
             maxiter=maxiter,
             maxcor=300,
