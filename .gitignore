@@ -130,5 +130,5 @@ log.txt
 *.local.md
 
 # Analysis output files
-*.png
+# *.png
 *.npz

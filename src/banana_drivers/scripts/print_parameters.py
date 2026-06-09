@@ -201,8 +201,7 @@ def print_curve_surface_metrics(biotsavart, surface, iota=None, sign_g=-1, ninde
 def build_parser():
     parser = argparse.ArgumentParser(description="Print parameters of SIMSOPT objects from JSON files.")
     parser.add_argument("json_files", nargs="+", help="JSON files containing SIMSOPT objects.")
-    parser.add_argument("--save-file", type=str, default=None,
-                        help="If filepath is provided, save output to file. Default is None (no saving).")
+    parser.add_argument("--save-file", type=str, default=None, help="If filepath is provided, save output to file. Default is None (no saving).")
     parser.add_argument("--iota", type=float, default=None, help="If specified, also prints the Boozer residual for the corresponding iota value. Requires a BoozerSurface JSON file to be provided.")
     parser.add_argument("--sign-g", type=int, choices=[-1, 1], default=-1, help="Sign of G for BoozerSurface residual calculation. Also requires iota. Default is -1.")
     return parser
@@ -212,9 +211,13 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     files = args.json_files
     savefile = args.save_file
+    if savefile is not None:
+        with open(savefile, "w") as f:
+            f.write("") # clear file
     for file in files:
         obj = load(file)
-        _print(f"File: {os.path.abspath(file)}")
+        _print(f" {'='*120}")
+        _print(f"File: {os.path.basename(file)}")
         _print(f"File object class: {type(obj)}")
         if isinstance(obj, BiotSavart):
             print_biotsavart_metrics(obj, nindent=0)
@@ -224,6 +227,7 @@ def main(argv=None):
             print_boozersurface_metrics(obj, iota=args.iota, sign_g=args.sign_g, nindent=0)
         else:
             _print("Unknown object class.")
+        _print("")
 
     return 0
 

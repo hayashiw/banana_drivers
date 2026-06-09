@@ -8,13 +8,7 @@ from simsopt.geo import BoozerSurface
 
 from ..hardware import (
     hbt_banana_ws,
-    BANANA_IDX,
-    N_BANANA,
     N_COILS
-)
-from ..utils.tags import (
-    resolve_boozersurface_json_filename,
-    resolve_biotsavart_json_filename,
 )
 
 HEADER = (
@@ -62,19 +56,19 @@ def main(argv=None):
     obj = load(input_file)
     if isinstance(obj, BoozerSurface):
         biotsavart = obj.biotsavart
-        biotsavart_tag_dict = resolve_boozersurface_json_filename(input_file)["biotsavart"]
     elif isinstance(obj, BiotSavart):
         biotsavart = obj
-        biotsavart_tag_dict = resolve_biotsavart_json_filename(input_file)["biotsavart"]
     else:
         raise ValueError(f"Unsupported input file type: {type(obj)}")
-    biotsavart_tag = biotsavart_tag_dict["tag"]
-    out_dir = args.out_dir or os.path.join(os.getcwd(), f"{biotsavart_tag}_coils")
+    
+    out_dir = args.out_dir or os.path.join(os.getcwd(), input_file.replace(".json", ".coils"))
+    os.makedirs(out_dir, exist_ok=True)
     
     coils = biotsavart.coils
     ncoils = len(coils)
     assert ncoils == N_COILS, f"Expected {N_COILS} coils, but found {ncoils}"
     
+    print(f"Saving coils from {input_file} to {out_dir}")
     for icoil in range(20, 30):
         curve = biotsavart.coils[icoil].curve
         Rmajor, _ = compare_major_radius(curve)
@@ -101,9 +95,10 @@ def main(argv=None):
             axis=1
         ):
             line += (",".join(map(str, row)) + "\n")
-        os.makedirs(out_dir, exist_ok=True)
-        with open(os.path.join(out_dir, f"coil{icoil-19}.csv"), "w") as f:
+        savefile = os.path.join(out_dir, f"coil{icoil-19}.csv")
+        with open(savefile, "w") as f:
             f.write(line)
+        print(f"    Coil {icoil-19} saved to {savefile}")
 
     return 0
 

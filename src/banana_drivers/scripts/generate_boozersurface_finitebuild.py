@@ -30,7 +30,7 @@ from ..utils.tags import resolve_boozersurface_json_filename, generate_boozersur
 def build_parser():
     parser = argparse.ArgumentParser(description="Generate a finite build BoozerSurface JSON file.")
     parser.add_argument("boozersurface_file", help="Path to a BoozerSurface JSON file.")
-    parser.add_argument("--out-dir", type=str, default=None, help="Out directory. Default is same as boozersurface_file.")
+    parser.add_argument("--out-dir", type=str, default=None, help="Out directory. Default is cwd.")
     return parser
 
 def main(argv=None):
@@ -82,7 +82,7 @@ def main(argv=None):
     tag_dict["biotsavart"]["finitebuild"] = "finitebuild"
     filename = generate_boozersurface_filename(tag_dict)
 
-    out_dir = args.out_dir or os.path.dirname(boozersurface_file)
+    out_dir = args.out_dir or "./"
     savefile = os.path.join(out_dir, filename)
     boozersurface_finitebuild.save(savefile)
     print(f"Saved BoozerSurface finite build to {savefile}")

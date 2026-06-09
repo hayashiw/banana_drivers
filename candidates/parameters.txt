@@ -1,0 +1,192 @@
+ ========================================================================================================================
+File: KiLnQcN7_proxy0d0kA_o4_stage2opt.KiLnQcN7_m12_n12_init.boozersurface_cw100d0_volSurface.vers0.json
+File object class: <class 'simsopt.geo.boozersurface.BoozerSurface'>
+ BoozerSurface object
+ Constraint weight: 100.0 (BoozerLS)
+     BiotSavart object
+     Number of coils: 51 (Expected: 51)
+     TF coil(s)
+         Current = -80.0 kA (fixed)
+     BANANA coil(s)
+         Order:                4
+         Number of quadpoints: 384
+         Current = -14.4 kA (unfixed)
+         Winding surface
+             R0 = 0.903 m (Expected 0.903 m)
+             a  = 0.142 m (Expected 0.142 m)
+         Curve length:         1.67510 m (Must be less than 1.9 m)
+         Curve-curve distance: 0.07700 m (Must be greater than 0.0462 m)
+         Curvature:            100.08762 1/m (Must be less than 100.0 1/m)
+         Poloidal extent:      71.36 deg
+     PROXY coil(s)
+         Current =   0.0 kA (fixed)
+     VF coil(s)
+         [Coil  1 | (R0, Z0) = (0.260,  0.351) m] Current =   0.0 kA (fixed)
+         [Coil  2 | (R0, Z0) = (0.260,  0.364) m] Current =   0.0 kA (fixed)
+         [Coil  3 | (R0, Z0) = (0.260,  0.376) m] Current =   0.0 kA (fixed)
+         [Coil  4 | (R0, Z0) = (0.260,  0.389) m] Current =   0.0 kA (fixed)
+         [Coil  5 | (R0, Z0) = (0.260,  0.402) m] Current =   0.0 kA (fixed)
+         [Coil  6 | (R0, Z0) = (0.260,  0.414) m] Current =   0.0 kA (fixed)
+         [Coil  7 | (R0, Z0) = (0.260, -0.351) m] Current =   0.0 kA (fixed)
+         [Coil  8 | (R0, Z0) = (0.260, -0.364) m] Current =   0.0 kA (fixed)
+         [Coil  9 | (R0, Z0) = (0.260, -0.376) m] Current =   0.0 kA (fixed)
+         [Coil 10 | (R0, Z0) = (0.260, -0.389) m] Current =   0.0 kA (fixed)
+         [Coil 11 | (R0, Z0) = (0.260, -0.402) m] Current =   0.0 kA (fixed)
+         [Coil 12 | (R0, Z0) = (0.260, -0.414) m] Current =   0.0 kA (fixed)
+         [Coil 13 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 14 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 15 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 16 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 17 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 18 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 19 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 20 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+ 
+     Surface object (<class 'simsopt.geo.surfacexyztensorfourier.SurfaceXYZTensorFourier'>)
+     mpol:         12
+     ntor:         12
+     nfp:          5
+     stellsym:     True
+     nphi:         65
+     ntheta:       64
+     Major radius: 0.86890 m
+     Minor radius: 0.04825 m
+     Volume:       0.03993 m^3
+     Range (/2pi): Full period (1/nfp)
+         Max quadpoints_phi: 0.19692 (Should be <= 0.20000)
+ 
+     Coil-Surface metrics
+         max(|B|):             0.39369 T
+         <|B·n| / |B|>:        0.00603 ± 0.00696
+         max(|B·n| / |B|):     0.04181
+         QS error:             0.02345
+         Coil-plasma distance: 0.03496 m (Must be greater than 0.01)
+
+ ========================================================================================================================
+File: KiLnQcN7_proxy0d0kA_o4_stage2opt.KiLnQcN7_m12_n12_presolved.boozersurface_cw100d0_volSurface.vers0.json
+File object class: <class 'simsopt.geo.boozersurface.BoozerSurface'>
+ BoozerSurface object
+ Constraint weight: 100.0 (BoozerLS)
+     BiotSavart object
+     Number of coils: 51 (Expected: 51)
+     TF coil(s)
+         Current = -80.0 kA (fixed)
+     BANANA coil(s)
+         Order:                4
+         Number of quadpoints: 384
+         Current = -14.8 kA (unfixed)
+         Winding surface
+             R0 = 0.903 m (Expected 0.903 m)
+             a  = 0.142 m (Expected 0.142 m)
+         Curve length:         1.55739 m (Must be less than 1.9 m)
+         Curve-curve distance: 0.04869 m (Must be greater than 0.0462 m)
+         Curvature:            100.10322 1/m (Must be less than 100.0 1/m)
+         Poloidal extent:      68.96 deg
+     PROXY coil(s)
+         Current =   0.0 kA (fixed)
+     VF coil(s)
+         [Coil  1 | (R0, Z0) = (0.260,  0.351) m] Current =   0.0 kA (fixed)
+         [Coil  2 | (R0, Z0) = (0.260,  0.364) m] Current =   0.0 kA (fixed)
+         [Coil  3 | (R0, Z0) = (0.260,  0.376) m] Current =   0.0 kA (fixed)
+         [Coil  4 | (R0, Z0) = (0.260,  0.389) m] Current =   0.0 kA (fixed)
+         [Coil  5 | (R0, Z0) = (0.260,  0.402) m] Current =   0.0 kA (fixed)
+         [Coil  6 | (R0, Z0) = (0.260,  0.414) m] Current =   0.0 kA (fixed)
+         [Coil  7 | (R0, Z0) = (0.260, -0.351) m] Current =   0.0 kA (fixed)
+         [Coil  8 | (R0, Z0) = (0.260, -0.364) m] Current =   0.0 kA (fixed)
+         [Coil  9 | (R0, Z0) = (0.260, -0.376) m] Current =   0.0 kA (fixed)
+         [Coil 10 | (R0, Z0) = (0.260, -0.389) m] Current =   0.0 kA (fixed)
+         [Coil 11 | (R0, Z0) = (0.260, -0.402) m] Current =   0.0 kA (fixed)
+         [Coil 12 | (R0, Z0) = (0.260, -0.414) m] Current =   0.0 kA (fixed)
+         [Coil 13 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 14 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 15 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 16 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 17 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 18 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 19 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 20 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+ 
+     Surface object (<class 'simsopt.geo.surfacexyztensorfourier.SurfaceXYZTensorFourier'>)
+     mpol:         12
+     ntor:         12
+     nfp:          5
+     stellsym:     True
+     nphi:         65
+     ntheta:       64
+     Major radius: 0.87656 m
+     Minor radius: 0.04804 m
+     Volume:       0.03993 m^3
+     Range (/2pi): Full period (1/nfp)
+         Max quadpoints_phi: 0.19692 (Should be <= 0.20000)
+ 
+     Coil-Surface metrics
+         max(|B|):             0.39174 T
+         <|B·n| / |B|>:        0.00131 ± 0.00102
+         max(|B·n| / |B|):     0.00671
+         QS error:             0.01603
+         Coil-plasma distance: 0.04359 m (Must be greater than 0.01)
+
+ ========================================================================================================================
+File: KiLnQcN7_reduced_curvature_proxy0d0kA_o4_stage2opt.KiLnQcN7_m10_n10_init.boozersurface_cw100d0_volSurface.vers0.json
+File object class: <class 'simsopt.geo.boozersurface.BoozerSurface'>
+ BoozerSurface object
+ Constraint weight: 100.0 (BoozerLS)
+     BiotSavart object
+     Number of coils: 51 (Expected: 51)
+     TF coil(s)
+         Current = -80.0 kA (fixed)
+     BANANA coil(s)
+         Order:                4
+         Number of quadpoints: 256
+         Current =  16.0 kA (fixed)
+         Winding surface
+             R0 = 0.903 m (Expected 0.903 m)
+             a  = 0.142 m (Expected 0.142 m)
+         Curve length:         1.62479 m (Must be less than 1.9 m)
+         Curve-curve distance: 0.08335 m (Must be greater than 0.0462 m)
+         Curvature:            36.50139 1/m (Must be less than 100.0 1/m)
+         Poloidal extent:      71.85 deg
+     PROXY coil(s)
+         Current =   0.0 kA (fixed)
+     VF coil(s)
+         [Coil  1 | (R0, Z0) = (0.260,  0.351) m] Current =   0.0 kA (fixed)
+         [Coil  2 | (R0, Z0) = (0.260,  0.364) m] Current =   0.0 kA (fixed)
+         [Coil  3 | (R0, Z0) = (0.260,  0.376) m] Current =   0.0 kA (fixed)
+         [Coil  4 | (R0, Z0) = (0.260,  0.389) m] Current =   0.0 kA (fixed)
+         [Coil  5 | (R0, Z0) = (0.260,  0.402) m] Current =   0.0 kA (fixed)
+         [Coil  6 | (R0, Z0) = (0.260,  0.414) m] Current =   0.0 kA (fixed)
+         [Coil  7 | (R0, Z0) = (0.260, -0.351) m] Current =   0.0 kA (fixed)
+         [Coil  8 | (R0, Z0) = (0.260, -0.364) m] Current =   0.0 kA (fixed)
+         [Coil  9 | (R0, Z0) = (0.260, -0.376) m] Current =   0.0 kA (fixed)
+         [Coil 10 | (R0, Z0) = (0.260, -0.389) m] Current =   0.0 kA (fixed)
+         [Coil 11 | (R0, Z0) = (0.260, -0.402) m] Current =   0.0 kA (fixed)
+         [Coil 12 | (R0, Z0) = (0.260, -0.414) m] Current =   0.0 kA (fixed)
+         [Coil 13 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 14 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 15 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 16 | (R0, Z0) = (1.572,  0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 17 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 18 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 19 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+         [Coil 20 | (R0, Z0) = (1.572, -0.651) m] Current =  -0.0 kA (fixed)
+ 
+     Surface object (<class 'simsopt.geo.surfacexyztensorfourier.SurfaceXYZTensorFourier'>)
+     mpol:         10
+     ntor:         10
+     nfp:          5
+     stellsym:     True
+     nphi:         128
+     ntheta:       127
+     Major radius: 0.86890 m
+     Minor radius: 0.04825 m
+     Volume:       0.03993 m^3
+     Range (/2pi): Full period (1/nfp)
+         Max quadpoints_phi: 0.19844 (Should be <= 0.20000)
+ 
+     Coil-Surface metrics
+         max(|B|):             0.39223 T
+         <|B·n| / |B|>:        0.00698 ± 0.00816
+         max(|B·n| / |B|):     0.03751
+         QS error:             0.02284
+         Coil-plasma distance: 0.03573 m (Must be greater than 0.01)
+
