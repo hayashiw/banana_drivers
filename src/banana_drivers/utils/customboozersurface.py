@@ -1,6 +1,9 @@
 import numpy as np
+import time
+
 from scipy.linalg import lu
 from scipy.optimize import minimize, least_squares
+
 import simsoptpp as sopp
 
 from simsopt.geo.surfaceobjectives import boozer_surface_residual, boozer_surface_dexactresidual_dcoils_dcurrents_vjp, boozer_surface_dlsqgrad_dcoils_vjp
@@ -9,10 +12,10 @@ from functools import partial
 
 __all__ = ['BoozerSurface']
 
-
-class BoozerSurface(Optimizable):
+class CustomBoozerSurface(Optimizable):
     r"""
-    The BoozerSurface class computes a flux surface of a BiotSavart magnetic field where the angles
+    The CustomBoozerSurface class is a modified version of the SIMSOPT BoozerSurface class which
+    computes a flux surface of a BiotSavart magnetic field where the angles
     of the surface are Boozer angles [1,2]. The class takes as input a Surface representation 
     (:obj:`~simsopt.geo.SurfaceXYZFourier` or :obj:`~simsopt.geo.SurfaceXYZTensorFourier`), 
     a BiotSavart magnetic field, a flux surface label evaluator, and a target value of the label.
@@ -83,8 +86,7 @@ class BoozerSurface(Optimizable):
     
     *[2]: Giuliani, A., Wechsung, F., Cerfon, A., Landreman, M., & Stadler, G. (2023). Direct stellarator coil optimization for nested magnetic surfaces with precise quasi-symmetry. Physics of Plasmas, 30(4).*
     """
-
-    def __init__(self, biotsavart, surface, label, targetlabel, constraint_weight=None, options=None, I=0.):
+    def __init__(self, biotsavart, surface, label, targetlabel, constraint_weight=None, options=None, I=0., print_func=None):
         """
         Args:
             biotsavart (:obj:`~simsopt.field.BiotSavart`): BiotSavart object.
@@ -97,13 +99,18 @@ class BoozerSurface(Optimizable):
             options (dict, Optional): A dictionary of solver options. If a keyword is not specified, then a default
                 value is used. Possible keywords are:
 
-                - `verbose` (bool): display convergence information. Defaults to True.
                 - `newton_tol` (float): tolerance for newton solver. Defaults to 1e-13 for BoozerExact and 1e-11 for BoozerLS.
                 - `bfgs_tol` (float): tolerance for bfgs solver. Defaults to 1e-10.
                 - `newton_maxiter` (int): maximum number of iterations for Newton solver. Defaults to 40.
                 - `bfgs_maxiter` (int): maximum number of iterations for BFGS solver. Defaults to 1500.
                 - `limited_memory` (bool): True if L-BFGS solver is desired, False if the BFGS solver otherwise. Defaults to False.
                 - `weight_inv_modB` (float): for BoozerLS surfaces, weight the residual by modB so that it does not scale with coil currents.  Defaults to True.
+            I (float, Optional): The value of I (toroidal current * mu0) to use in the Boozer residual.
+                This value is used with a proxy coil for approximating finite plasma current. The proxy current must be fixed.
+                As a result, `I` is also fixed. Defaults to 0.
+            print_func (callable, Optional): A custom print function that takes the same arguments as the built in print function.
+                This can be used to redirect the print output of the solvers to a log file or other output stream.
+                Defaults to None, which uses the built in print function.
         """
         super().__init__(depends_on=[biotsavart])
 
@@ -123,11 +130,6 @@ class BoozerSurface(Optimizable):
         if options is None:
             options = {}
 
-        # set the default options now
-        if 'verbose' not in options:
-            options['verbose'] = True
-
-        # default solver options for the BoozerExact and BoozerLS solvers
         if self.boozer_type == 'exact':
             if 'newton_tol' not in options:
                 options['newton_tol'] = 1e-13
@@ -147,6 +149,14 @@ class BoozerSurface(Optimizable):
             if 'weight_inv_modB' not in options:
                 options['weight_inv_modB'] = True
         self.options = options
+
+        if print_func is None:
+            def print_func(*args, data=False):
+                if data:
+                    print(*args, flush=True)
+                else:
+                    print("# ", *args, flush=True)
+        self.print_func = print_func
 
     def recompute_bell(self, parent=None):
         self.need_to_run_code = True
@@ -182,7 +192,7 @@ class BoozerSurface(Optimizable):
 
         # BoozerExact default solver
         if self.boozer_type == 'exact':
-            res = self.solve_residual_equation_exactly_newton(iota=iota, G=G, tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'], verbose=self.options['verbose'])
+            res = self.solve_residual_equation_exactly_newton(iota=iota, G=G, tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'])
             return res
 
         # BoozerLS default solver
@@ -193,14 +203,14 @@ class BoozerSurface(Optimizable):
             # first try BFGS.  You could also try L-BFGS by setting limited_memory=True in the options dictionary, which might be faster.  However, BFGS appears
             # to generally result in solutions closer to optimality.
             res = self.minimize_boozer_penalty_constraints_LBFGS(constraint_weight=self.constraint_weight, iota=iota, G=G,
-                                                                 tol=self.options['bfgs_tol'], maxiter=self.options['bfgs_maxiter'], verbose=self.options['verbose'], limited_memory=self.options['limited_memory'],
-                                                                 weight_inv_modB=self.options['weight_inv_modB'])
+                                                                 tol=self.options['bfgs_tol'], maxiter=self.options['bfgs_maxiter'], limited_memory=self.options['limited_memory'],
+                                                                 weight_inv_modB=self.options['weight_inv_modB'], bounds=self.options.get('bounds', None))
             iota, G = res['iota'], res['G']
 
             ## polish off using Newton's method
             self.need_to_run_code = True
             res = self.minimize_boozer_penalty_constraints_newton(constraint_weight=self.constraint_weight, iota=iota, G=G,
-                                                                  verbose=self.options['verbose'], tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'],
+                                                                  tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'],
                                                                   weight_inv_modB=self.options['weight_inv_modB'])
             return res
 
@@ -385,7 +395,7 @@ class BoozerSurface(Optimizable):
         dres[-1, :-2] = drz
         return res, dres
 
-    def minimize_boozer_penalty_constraints_LBFGS(self, tol=1e-3, maxiter=1000, constraint_weight=1., iota=0., G=None, limited_memory=True, weight_inv_modB=True, verbose=False):
+    def minimize_boozer_penalty_constraints_LBFGS(self, tol=1e-3, maxiter=1000, constraint_weight=1., iota=0., G=None, limited_memory=True, weight_inv_modB=True, bounds=None):
         r"""
         This function uses L-BFGS to find the surface that approximately solves
 
@@ -432,17 +442,43 @@ class BoozerSurface(Optimizable):
         else:
             x = np.concatenate((s.get_dofs(), [iota, G]))
 
-        def fun(x): return self.boozer_penalty_constraints_vectorized(x, derivatives=1, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
+        tracker = dict(iters=0, evals=0)
 
+        t0 = time.monotonic()
+        def fun(x):
+            tracker["evals"] += 1
+            r, J = self.boozer_penalty_constraints_vectorized(x, derivatives=1, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
+            line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
+            self.print_func(f"0,{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
+            return r, J
+        
+        def callback(x):
+            tracker["iters"] += 1
+            tracker["evals"] = 0
+            r, J = self.boozer_penalty_constraints_vectorized(x, derivatives=1, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
+            line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
+            self.print_func(f"0,{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
+
+        if bounds is not None:
+            limited_memory = True # L-BFGS-B is required for bounds
         method = 'L-BFGS-B' if limited_memory else 'BFGS'
         options = {'maxiter': maxiter, 'gtol': tol}
         if limited_memory:
             options['maxcor'] = 200
             options['ftol'] = tol
 
+        line = "iota" if G is None else "iota,G"
+        self.print_func(f"I (plasma_current * mu0) = {self.I}")
+        self.print_func(f"targetlabel = {self.targetlabel}")
+        self.print_func(f"{method} (BoozerLS) solve")
+        self.print_func(f"is_newton,time,iters,evals,r,|J|,{line},label", data=True)
+        r, J = self.boozer_penalty_constraints_vectorized(x, derivatives=1, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
+        line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
+        self.print_func(f"0,{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
         res = minimize(
             fun, x, jac=True, method=method,
-            options=options)
+            options=options, bounds=bounds, callback=callback)
+        self.print_func("done")
 
         resdict = {
             "fun": res.fun, "gradient": res.jac, "iter": res.nit, "info": res, "success": res.success, "G": None, 'weight_inv_modB': weight_inv_modB, 'type': 'ls'
@@ -461,12 +497,11 @@ class BoozerSurface(Optimizable):
         self.res = resdict
         self.need_to_run_code = False
 
-        if verbose:
-            print(f"{method} solve - {resdict['success']}  iter={resdict['iter']}, iota={resdict['iota']:.16f}, ||grad||_inf = {np.linalg.norm(resdict['gradient'], ord=np.inf):.3e}", flush=True)
+        self.print_func(f"{method} solve - {resdict['success']}  iter={resdict['iter']}, iota={resdict['iota']:.16f}, ||grad||_inf = {np.linalg.norm(resdict['gradient'], ord=np.inf):.3e}")
 
         return resdict
 
-    def minimize_boozer_penalty_constraints_newton(self, tol=1e-12, maxiter=10, constraint_weight=1., iota=0., G=None, stab=0., weight_inv_modB=True, verbose=False):
+    def minimize_boozer_penalty_constraints_newton(self, tol=1e-12, maxiter=10, constraint_weight=1., iota=0., G=None, stab=0., weight_inv_modB=True):
         """
         This function does the same as :mod:`minimize_boozer_penalty_constraints_LBFGS`, but instead of LBFGS it uses
         Newton's method.
@@ -508,7 +543,16 @@ class BoozerSurface(Optimizable):
 
         val, dval, d2val = self.boozer_penalty_constraints_vectorized(x, derivatives=2, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
 
+        t0 = time.monotonic()
         norm = np.linalg.norm(dval)
+        tracker = dict(iters=0)
+        line = "iota" if G is None else "iota,G"
+        self.print_func(f"I (plasma_current * mu0) = {self.I}")
+        self.print_func(f"targetlabel = {self.targetlabel}")
+        self.print_func(f"NEWTON (BoozerLS) solve")
+        self.print_func(f"is_newton,time,iters,evals,r,|J|,{line},label")
+        line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
+        self.print_func(f"1,{time.monotonic() - t0},{tracker['iters']},0,{val},{norm},{line},{self.label.J()}", data=True)
         while i < maxiter and norm > tol:
             d2val += stab*np.identity(d2val.shape[0])
             dx = np.linalg.solve(d2val, dval)
@@ -518,6 +562,10 @@ class BoozerSurface(Optimizable):
             val, dval, d2val = self.boozer_penalty_constraints_vectorized(x, derivatives=2, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
             norm = np.linalg.norm(dval)
             i = i+1
+            tracker["iters"] = i
+            line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
+            self.print_func(f"1,{time.monotonic() - t0},{i},0,{val},{norm},{line},{self.label.J()}", data=True)
+        self.print_func("done")
 
         # Get residual for output - vectorized version returns scalar objective
         # We use the gradient norm as a proxy for the residual norm
@@ -542,8 +590,7 @@ class BoozerSurface(Optimizable):
         self.res = res
         self.need_to_run_code = False
 
-        if verbose:
-            print(f"NEWTON solve - {res['success']}  iter={res['iter']}, iota={res['iota']:.16f}, ||grad||_inf = {np.linalg.norm(res['jacobian'], ord=np.inf):.3e}", flush=True)
+        self.print_func(f"NEWTON solve - {res['success']}  iter={res['iter']}, iota={res['iota']:.16f}, ||grad||_inf = {np.linalg.norm(res['jacobian'], ord=np.inf):.3e}")
 
         return res
 
@@ -771,7 +818,7 @@ class BoozerSurface(Optimizable):
         self.need_to_run_code = False
         return res
 
-    def solve_residual_equation_exactly_newton(self, tol=1e-10, maxiter=10, iota=0., G=None, verbose=False):
+    def solve_residual_equation_exactly_newton(self, tol=1e-10, maxiter=10, iota=0., G=None):
         """
         The function implements the BoozerExact approach by solving residual equation exactly using Newtons 
         method.  
@@ -891,6 +938,13 @@ class BoozerSurface(Optimizable):
         i = 0
         r, J = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1, I=self.I)
         norm = 1e6
+        tracker = dict(iters=0)
+        self.print_func(f"I (plasma_current * mu0) = {self.I}")
+        self.print_func(f"targetlabel = {self.targetlabel}")
+        self.print_func(f"NEWTON (BoozerExact) solve")
+        self.print_func(f"time,iters,r,|J|,iota,G,label", data=True)
+        t0 = time.monotonic()
+        self.print_func(f"{time.monotonic() - t0},{tracker['iters']},{np.linalg.norm(r)},{np.linalg.norm(J)},{iota},{G},{self.label.J()}")
         while i < maxiter:
             if s.stellsym:
                 b = np.concatenate((r[mask], [(label.J()-self.targetlabel)]))
@@ -918,6 +972,9 @@ class BoozerSurface(Optimizable):
             G = x[-1]
             i += 1
             r, J = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1, I=self.I)
+            tracker['iters'] = i
+            self.print_func(f"{time.monotonic() - t0},{tracker['iters']},{np.linalg.norm(r)},{np.linalg.norm(J)},{iota},{G},{self.label.J()}", data=True)
+        self.print_func("done")
 
         if s.stellsym:
             J = np.vstack((
@@ -939,8 +996,7 @@ class BoozerSurface(Optimizable):
             "I": self.I
         }
 
-        if verbose:
-            print(f"NEWTON solve - {res['success']}  iter={res['iter']}, iota={res['iota']:.16f}, ||residual||_inf = {np.linalg.norm(res['residual'], ord=np.inf):.3e}", flush=True)
+        self.print_func(f"NEWTON solve - {res['success']}  iter={res['iter']}, iota={res['iota']:.16f}, ||residual||_inf = {np.linalg.norm(res['residual'], ord=np.inf):.3e}")
 
         self.res = res
         self.need_to_run_code = False

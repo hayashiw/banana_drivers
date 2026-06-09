@@ -17,12 +17,11 @@ from ..utils.surface import change_surface_resolution, convert_to_boozerexact_su
 MU0 = np.pi * 4e-7
 
 def build_parser():
-    parser = argparse.ArgumentParser(
-        description="Initialize a BoozerSurface from a BiotSavart JSON file and Surface JSON file.")
+    parser = argparse.ArgumentParser(description="Initialize a BoozerSurface from a BiotSavart JSON file and Surface JSON file.")
     parser.add_argument("biotsavart_file", type=str, help="Path to the BiotSavart JSON file.")
     parser.add_argument("surface_file", type=str, help="Path to the Surface JSON file.")
     parser.add_argument("iota", type=float, help="Initial guess for iota.")
-    parser.add_argument("sign_g", type=int, choices=[-1, 1], help="Sign of initial guess for G.")
+    parser.add_argument("--sign-g", type=int, choices=[-1, 1], default=-1, help="Sign of initial guess for G. Default: -1.")
     parser.add_argument("--constraint-weight", type=float, default=1e2, help="Constraint weight for BoozerSurface. Set to 0 for BoozerExact. Default: 1e2.")
     parser.add_argument("--volume-target-str", type=str, default=None, help="If specified, use the target volume passed in as a float or a percentage. Otherwise, uses the surface volume as the target volume.")
     parser.add_argument("--mpol", type=int, default=None, help="Number of poloidal modes for the BoozerSurface. Default: inherit from surface file.")
