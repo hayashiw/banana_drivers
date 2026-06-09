@@ -23,6 +23,21 @@ DRIVER_DEFAULTS = dict(
     tol=DEFAULT_TOL,
 )
 
+FIX_CURRENT_KW_PATTERN = r"^(?P<coil_type>tf|banana|vf)_(?P<fix_status>(no_)?fix)_current$"
+
+# Inputs from parsers that feed into filename tags
+FILENAME_TAG_INPUTS = [
+    "banana_order",
+    "banana_qpts_per_order",
+    "proxy_current_ka",
+    "mpol",
+    "ntor",
+    "ntheta",
+    "nphi",
+    "constraint_weight",
+    "volume_target_str",
+]
+
 def tf_coil_parser():
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--tf-current-ka", type=float, default=None,

@@ -1,5 +1,6 @@
 import argparse
 import inspect
+import re
 
 from simsopt._core import load
 from simsopt.field import BiotSavart
@@ -15,13 +16,14 @@ from ..utils.cli import (
     vf_coil_parser,
     surface_resolution_parser,
     boozersurface_parameters_parser,
+    FIX_CURRENT_KW_PATTERN,
+    FILENAME_TAG_INPUTS
 )
 from ..utils.tags import (
     load_tags_from_biotsavart,
     load_tags_from_surface,
     load_tags_from_boozersurface,
     generate_random_tag,
-    compare_tags,
 )
 from ..utils.io import save_to_json
 
@@ -43,6 +45,9 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     inputs = {key: val for key, val in vars(args).items() if val is not None}
+    print(f"Inputs and requested parameter changes:")
+    for key, val in inputs.items():
+        print(f"    {key}: {val}")
     nargs = len(inputs)
     assert nargs > 1, "No parameters specified to change. Please provide at least one parameter to change."
     
@@ -65,13 +70,17 @@ def main(argv=None):
     function_signature = inspect.signature(rebuild_func)
     keyword_args = [
         name for name, param in function_signature.parameters.items()
-        if param.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD]
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY
+        )]
     for keyword in keyword_args:
         if keyword in inputs:
             nargs_obj += 1
     assert nargs_obj > 0, f"No valid parameters specified to change for type {type(obj).__name__}. Please provide at least one valid parameter."
 
-    kwargs = {key: val for key, val in inputs.items() if key in keyword_args}
+    kwarg_inputs = {key: val for key, val in inputs.items() if key != "file"}
+    kwargs = {key: val for key, val in kwarg_inputs.items() if key in keyword_args}
     new_obj = rebuild_func(obj, **kwargs)
     new_tag_dict = load_tag_func(new_obj)
     for key in ["biotsavart", "surface"]:
@@ -79,20 +88,49 @@ def main(argv=None):
             new_tag_dict[key]["tag"] = tag_dict[key]["tag"]
             new_tag_dict[key]["stage"] = tag_dict[key]["stage"]
     if "boozersurface" in tag_dict:
-        new_tag_dict["boozersurface"]["volume_target_str"] = tag_dict["boozersurface"]["volume_target_str"]
+        if "volume_target_str" in kwarg_inputs:
+            new_tag_dict["boozersurface"]["volume_target_str"] = kwarg_inputs["volume_target_str"].replace(".", "d").replace("%", "pct")
+        else:
+            new_tag_dict["boozersurface"]["volume_target_str"] = tag_dict["boozersurface"]["volume_target_str"]
     if "version_number_str" in tag_dict:
         new_tag_dict["version_number_str"] = tag_dict["version_number_str"]
     if "iter_number" in tag_dict:
         new_tag_dict["iter_number"] = tag_dict["iter_number"]
 
-    new_random_key = compare_tags(tag_dict, new_tag_dict)
-    if new_random_key:
+    tag_kwargs = {
+        key: val for key, val in kwarg_inputs.items() if key in FILENAME_TAG_INPUTS}
+    non_tag_non_fix_kwargs = {
+        key: val for key, val in kwarg_inputs.items() if
+        (key not in FILENAME_TAG_INPUTS) and
+        not re.match(FIX_CURRENT_KW_PATTERN, key)}
+    non_tag_fix_kwargs = {
+        key: val for key, val in kwarg_inputs.items() if
+        (key not in FILENAME_TAG_INPUTS) and
+        re.match(FIX_CURRENT_KW_PATTERN, key)}
+    new_random_tag = len(non_tag_non_fix_kwargs) > 0
+    
+    if new_random_tag:
         new_tag = generate_random_tag()
-        print(f"Generated new random tag: {new_tag}")
+        print(f"Non-tag, non-fix/unfix parameters:")
+        for key, val in non_tag_non_fix_kwargs.items():
+            print(f"    {key}: {val}")
+        print(f"Changing non-tag, non-fix/unfix keys triggers a new random tag: {new_tag}")
         if "biotsavart" in tag_dict:
             new_tag_dict["biotsavart"]["tag"] = new_tag
         if "surface" in tag_dict:
             new_tag_dict["surface"]["tag"] = new_tag
+    else:
+        if (len(tag_kwargs) == 0) and (len(non_tag_fix_kwargs) > 0):
+            print(f"Only fix/unfix parameters specified:")
+            for key, val in non_tag_fix_kwargs.items():
+                print(f"    {key}: {val}")
+            print(f"If original file is `minimal=True`, then a new file will be saved.")
+            print(f"Else, the original file will be overwritten.")
+        if (len(tag_kwargs) > 0):
+            print(f"Tag parameters specified:")
+            for key, val in tag_kwargs.items():
+                print(f"    {key}: {val}")
+            print(f"Changing tag parameters creates a new file.")
 
     savefile = save_to_json(new_obj, new_tag_dict, minimal=False)
     print(f"Saved updated file to: {savefile}")
