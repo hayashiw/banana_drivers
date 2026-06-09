@@ -145,6 +145,12 @@ def custom_objectives_parser():
                    help=f"Weight for TF and banana coil current objectives. Default: {DEFAULT_WEIGHT_CURRENTS}.")
     return p
 
+def boozersurface_parameters_parser():
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--constraint-weight", type=float, default=None, help="Constraint weight. If None, inherits from `boozersurface_file`. Set constraint weight == 0 to use BoozerExact. Default: None.")
+    p.add_argument("--volume-target-str", type=str, default=None, help="Volume target. If None, inherits from `boozersurface_file`. Input either a float or a percentage. Default: None.")
+    return p
+
 def driver_parser(stage):
     assert stage in STAGES, f"Invalid stage: {stage}. Must be one of {STAGES}"
     is_stage2 = (stage == STAGE2)
@@ -159,18 +165,22 @@ def driver_parser(stage):
     else:
         objectives_parser = singlestage_objectives_parser
 
+    parents = [
+        tf_coil_parser(),
+        banana_coil_parser(),
+        proxy_coil_parser(),
+        vf_coil_parser(),
+        surface_resolution_parser(),
+        shared_objectives_parser(),
+        custom_objectives_parser(),
+        objectives_parser(),
+    ]
+    if not is_stage2:
+        parents.append(boozersurface_parameters_parser())
+        
     p = argparse.ArgumentParser(
         description=description,
-        parents=[
-            tf_coil_parser(),
-            banana_coil_parser(),
-            proxy_coil_parser(),
-            vf_coil_parser(),
-            surface_resolution_parser(),
-            shared_objectives_parser(),
-            custom_objectives_parser(),
-            objectives_parser(),
-        ],
+        parents=parents,
     )
     p.add_argument("boozersurface_file", type=str, help=boozersurface_help)
     p.add_argument("--config-file", type=str, default=None,
@@ -188,8 +198,6 @@ def driver_parser(stage):
     else:
         p.add_argument("iota", type=float, help="Target iota")
         p.add_argument("--sign-g", type=int, choices=[-1, 1], default=None, help=f"Sign of G for Boozer solve. Default: {DEFAULT_SIGN_G}.")
-        p.add_argument("--constraint-weight", type=float, default=None, help="Constraint weight. If None, inherits from `boozersurface_file`. Set constraint weight == 0 to use BoozerExact. Default: None.")
-        p.add_argument("--volume-target-str", type=str, default=None, help="Volume target. If None, inherits from `boozersurface_file`. Input either a float or a percentage. Default: None.")    
     return p
 
 def load_yaml(yaml_file):

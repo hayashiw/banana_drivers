@@ -90,8 +90,8 @@ def rebuild_boozersurface(
         new_ntheta = 2*new_mpol+1
         new_nphi = 2*new_ntor+1
     else:
-        new_ntheta = ntheta or surface.ntheta
-        new_nphi = nphi or surface.nphi
+        new_ntheta = ntheta or surface.quadpoints_theta.size
+        new_nphi = nphi or surface.quadpoints_phi.size
 
     new_proxy_rz = (surface.major_radius(), 0.0) if proxy_coil_from_surface else proxy_rz
 

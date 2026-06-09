@@ -136,8 +136,9 @@ def check_tags(tag_dict: dict[str, int | str]) -> None:
     msg = {}
 
     enforce_biotsavart_tags = ENFORCE_BIOTSAVART_TAGS.copy()
-    if ("biotsavart" in tag_dict) and ("finitebuild" in tag_dict["biotsavart"]):
-        enforce_biotsavart_tags += ["finitebuild"]
+    for key in ["virtualcasing", "finitebuild"]:
+        if ("biotsavart" in tag_dict) and (key in tag_dict["biotsavart"]):
+            enforce_biotsavart_tags += [key]
 
     for enforce_tag_list, pattern_dict, label in [
         (enforce_biotsavart_tags, BIOTSAVART_PATTERNS, "biotsavart"),
@@ -238,8 +239,9 @@ def generate_biotsavart_tag(
     if enforce_tags: check_tags(tag_dict)
 
     enforce_biotsavart_tags = ENFORCE_BIOTSAVART_TAGS.copy()
-    if "finitebuild" in tag_dict["biotsavart"]:
-        enforce_biotsavart_tags += ["finitebuild"]
+    for key in ["virtualcasing", "finitebuild"]:
+        if key in tag_dict["biotsavart"]:
+            enforce_biotsavart_tags += [key]
 
     tags = []
     for key in BIOTSAVART_PATTERNS:
@@ -375,14 +377,13 @@ def generate_random_tag(n: int = 8, a_vs_d: float = 2/3) -> str:
     random.shuffle(characters)
     return "".join(characters)
 
-def load_tags_from_biotsavart(biotsavart: str | BiotSavart) -> dict[str, int | str]:
+def load_tags_from_biotsavart(biotsavart: str | BiotSavart, biotsavart_tag: str = "biotsavart", stage: str = "init") -> dict[str, int | str]:
     if isinstance(biotsavart, str):
         filename = biotsavart
         biotsavart = load(biotsavart)
         partial_tag_dict = resolve_biotsavart_json_filename(filename, enforce_tags=False)
         biotsavart_tag = partial_tag_dict["biotsavart"]["tag"]
-    else:
-        biotsavart_tag = "biotsavart"
+        stage = partial_tag_dict["biotsavart"]["stage"]
     
     coils = biotsavart.coils
     ncoils = len(coils)
@@ -399,21 +400,22 @@ def load_tags_from_biotsavart(biotsavart: str | BiotSavart) -> dict[str, int | s
     proxy_current_ka_str = str(round(proxy_current_ka, 6)).replace(".", "d")
 
     tag_dict = dict(
+        tag=biotsavart_tag,
         order=order,
         nqpts=nqpts,
         proxy_current_ka_str=proxy_current_ka_str,
+        stage=stage,
     )
     if is_finitebuild: tag_dict["finitebuild"] = "finitebuild"
-    return {f"{biotsavart_tag}": tag_dict}
+    return dict(biotsavart=tag_dict)
 
-def load_tags_from_surface(surface: str | Surface) -> dict[str, int | str]:
+def load_tags_from_surface(surface: str | Surface, surface_tag: str = "surface", stage: str = "init") -> dict[str, int | str]:
     if isinstance(surface, str):
         filename = surface
         surface = load(surface)
         partial_tag_dict = resolve_surface_json_filename(filename, enforce_tags=False)
         surface_tag = partial_tag_dict["surface"]["tag"]
-    else:
-        surface_tag = "surface"
+        stage = partial_tag_dict["surface"]["stage"]
 
     mpol = surface.mpol
     ntor = surface.ntor
@@ -421,14 +423,23 @@ def load_tags_from_surface(surface: str | Surface) -> dict[str, int | str]:
     ntheta = surface.quadpoints_theta.size
 
     tag_dict = dict(
+        tag=surface_tag,
         mpol=mpol,
         ntor=ntor,
         nphi=nphi,
         ntheta=ntheta,
+        stage=stage,
     )
-    return {f"{surface_tag}": tag_dict}
+    return dict(surface=tag_dict)
 
-def load_tags_from_boozersurface(boozersurface: str | BoozerSurface, volume_target_str: str = "Surface") -> dict[str, int | str]:
+def load_tags_from_boozersurface(
+    boozersurface: str | BoozerSurface,
+    volume_target_str: str = "Surface",
+    biotsavart_tag: str = "biotsavart",
+    surface_tag: str = "surface",
+    biotsavart_stage: str = "init",
+    surface_stage: str = "init",
+) -> dict[str, int | str]:
     if isinstance(boozersurface, str):
         filename = boozersurface
         partial_tag_dict = resolve_boozersurface_json_filename(filename, enforce_tags=False)
@@ -440,37 +451,29 @@ def load_tags_from_boozersurface(boozersurface: str | BoozerSurface, volume_targ
         volume_target_str = partial_tag_dict["boozersurface"]["volume_target_str"] # overrides input kwarg
         boozersurface = load(boozersurface)
     else:
-        biotsavart_tag = "biotsavart"
         boozersurface_tag = "boozersurface"
-        surface_tag = "surface"
-        biotsavart_stage = "init"
-        surface_stage = "init"
         partial_tag_dict = dict()
-    biotsavart_tag_dict = dict(tag=biotsavart_tag, stage=biotsavart_stage)
-    surface_tag_dict = dict(tag=surface_tag, stage=surface_stage)
-    boozersurface_tag_dict = dict(tag=boozersurface_tag)
 
     constraint_weight = boozersurface.constraint_weight
     constraint_weight_str = "Exact" if (constraint_weight is None) else str(round(constraint_weight, 6)).replace(".", "d")
-    boozersurface_tag_dict.update(
+    boozersurface_tag_dict = dict(boozersurface=dict(
+        tag=boozersurface_tag,
         constraint_weight_str=constraint_weight_str,
         volume_target_str=volume_target_str
-    )
+    ))
 
     biotsavart = boozersurface.biotsavart
-    biotsavart_tag_dict.update(
-        load_tags_from_biotsavart(biotsavart)["biotsavart"]
-    )
+    biotsavart_tag_dict = load_tags_from_biotsavart(
+        biotsavart, biotsavart_tag=biotsavart_tag, stage=biotsavart_stage)
 
     surface = boozersurface.surface
-    surface_tag_dict.update(
-        load_tags_from_surface(surface)["surface"]
-    )
+    surface_tag_dict = load_tags_from_surface(
+        surface, surface_tag=surface_tag, stage=surface_stage)
 
     tag_dict = dict(
-        boozersurface=boozersurface_tag_dict,
-        biotsavart=biotsavart_tag_dict,
-        surface=surface_tag_dict,
+        **boozersurface_tag_dict,
+        **biotsavart_tag_dict,
+        **surface_tag_dict,
     )
     for key in OTHER_PATTERNS:
         if key in partial_tag_dict:
@@ -496,3 +499,21 @@ def update_boozersurface_tags_from_args(
     new_tag_dict["boozersurface"]["tag"] = old_tag_dict["boozersurface"]["tag"]
     return new_tag_dict, boozersurface
 
+def compare_tags(tag_dict1: dict[str, int | str], tag_dict2: dict[str, int | str]) -> bool:
+    if len(tag_dict1) != len(tag_dict2):
+        return False
+
+    all_subdicts = []
+    for key, val in tag_dict1.items():
+        if key not in tag_dict2:
+            return False
+        
+        if isinstance(val, dict):
+            compare_subdict = compare_tags(val, tag_dict2[key])
+            all_subdicts.append(compare_subdict)
+        else:
+            if val != tag_dict2[key]:
+                return False
+            
+    return all(all_subdicts)
+        

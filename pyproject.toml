@@ -21,6 +21,7 @@ where = ["src"]
 banana_drivers = ["inputs/*", "drivers/*.yaml", "scripts/*.sh"]
 
 [project.scripts]
+banana-change-parameters = "banana_drivers.scripts.change_parameters:main"
 banana-convert-tags = "banana_drivers.scripts.convert_tags:main"
 banana-flip-surfacerzfourier = "banana_drivers.scripts.flip_surfacerzfourier:main"
 banana-generate-boozersurface-finitebuild = "banana_drivers.scripts.generate_boozersurface_finitebuild:main"
