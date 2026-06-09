@@ -16,23 +16,61 @@ cd banana_drivers
 pip install -e .
 ```
 
-Python 3.10+ is required. The deps in `pyproject.toml` (`numpy`, `scipy`, `matplotlib`, `pyyaml`) are the package's own; SIMSOPT (with the banana-specific `CurveCWSFourierCPP` and CWS-frame objectives) must be installed separately — see [SIMSOPT fork](#simsopt-fork) below.
+Python 3.10+ is required. The deps in `pyproject.toml` (`numpy`, `scipy`, `matplotlib`, `pyyaml`) are the package's own; SIMSOPT (with the banana-specific CWS curve and CWS-frame objectives) must be installed separately — see [SIMSOPT fork](#simsopt-fork) below.
 
 After install, all CLI entry points listed below are available as `banana-*` shell commands.
 
 ---
 
-## Pipeline status
+## Pipeline
 
-| Stage | Status | Driver |
-|-------|--------|--------|
-| Generate initial coils + surface | working | `banana-generate-biotsavart`, `banana-generate-default-surface` |
-| **Stage 2** — coil-only optimization (`SquaredFlux` + geometry penalties) | working | `banana-stage2` |
-| **Singlestage** — joint coil + surface optimization (BoozerLS) | **WIP**, raises on import | `src/banana_drivers/drivers/singlestage.py` |
+Both optimization drivers read and write a single **`BoozerSurface` JSON**, which bundles a `BiotSavart` (the coil set) and a `Surface`. Stage 2 output therefore feeds directly into singlestage.
 
-Stage 2 runs on a fixed target surface, optimizing the banana coil DOFs (shape and, optionally, current). The CLI takes either a `--biotsavart-file` + `--wout-file`/`--surface-file` pair, a `--boozersurface-file`, or `--build` to construct everything from coil args. See `banana-stage2 --help`.
+| Step | Command | What it does |
+|------|---------|--------------|
+| 1. Initialize | `banana-initialize-local` | Creates the `local/` working tree and writes the original `BiotSavart`, `Surface`, and `BoozerSurface` JSONs (target surface from `inputs/wout_original.nc` at $s=0.24$, scaled to $R_0=0.925$ m; default coil set). |
+| 2. Stage 2 | `banana-stage2 <boozersurface.json>` | Coil-only optimization on a fixed surface: `SquaredFlux` + geometry/manufacturability penalties over the banana coil DOFs (and, optionally, currents). |
+| 3. Singlestage | `banana-singlestage <boozersurface.json> <iota>` | Joint coil + surface optimization via a `BoozerSurface` (BoozerLS, or BoozerExact when `--constraint-weight 0`): drives rotational transform toward `iota` and minimizes the non-quasisymmetric ratio while holding the manufacturability penalties. |
 
-Singlestage is the next piece under construction. Its entry point is intentionally **not** registered in `pyproject.toml` and the module raises at import time so collaborators can't accidentally invoke a half-built driver.
+Run from inside `local/outputs/` so artifacts stay out of the source tree (the drivers default `--out-dir` to the current directory).
+
+### Driver options
+
+Both drivers share a large set of optional flags built from `utils/cli.py`:
+
+- **Coil overrides** — `--tf-current-ka`, `--banana-current-ka`, `--proxy-current-ka`, `--vf-current-ka`, their `--*-fix-current` toggles, `--banana-order`, `--banana-qpts-per-order`, `--proxy-rz`. Unset values inherit from the input `BoozerSurface`.
+- **Surface resolution** — `--mpol`, `--ntor`, `--nphi`, `--ntheta` (inherit when unset).
+- **Objective targets/weights** — per objective `--max-*` / `--min-*` bounds and `--weight-*` weights (coil length, curvature, coil–coil distance, poloidal extent, ellipse width, coil self-distance, currents; plus `--weight-sqflux` for stage 2 and `--weight-non-quasisymmetric-ratio` / `--weight-boozer-residual` / `--weight-iota` / `--*-coil-surface-distance` for singlestage). Defaults live in `objectives/defaults.py`.
+- **Run control** — `--maxiter`, `--save-iter-dir`, `--save-iter-freq`, `--out-dir`, `--config-file`.
+- **Singlestage only** — positional `iota`, `--sign-g`, `--constraint-weight`, `--volume-target-str`.
+- **Stage 2 only** — `--vcasing-file` (virtual-casing $B\cdot\hat{n}$ target for finite-current runs).
+
+A YAML passed to `--config-file` may set any of the same option names; explicit CLI flags take priority over the config file. Every run also writes its fully-resolved inputs to `<output>.inputs.yaml` for reproducibility. See `banana-stage2 --help` / `banana-singlestage --help` for the complete list.
+
+`banana-singlestage-multithread` and `banana-singlestage-multithread-openblas` are thin wrappers that set OpenMP/BLAS thread environment variables and `exec` the singlestage driver.
+
+---
+
+## Filenames and tags
+
+Inputs and outputs are named by a **dot-separated tag scheme** (`utils/tags.py`) so a filename fully describes the object:
+
+```
+<biotsavart_tag>.<surface_tag>.<boozersurface_tag>[.<other_tags>].json
+```
+
+For example:
+
+```
+original_proxy0d0kA_o6_stage2opt.original_m8_n8_stage2opt.boozersurface_cw100d0_volSurface.vers0.json
+```
+
+- **biotsavart** — `<name>_proxy<I>kA_o<order>_<stage>` (`+_finitebuild` for finite-build sets).
+- **surface** — `<name>_m<mpol>_n<ntor>_<stage>`.
+- **boozersurface** — `boozersurface_cw<constraint_weight>_vol<volume_target>` (`cwExact` for BoozerExact, `volSurface` for the surface's own volume; a percentage `50%` is stored as `50pct`, a decimal `0.5` as `0d5`).
+- **other** — optional `vers<N>` / `iter<N>`. Version numbers branch as `<N>_<M>` for re-runs from an earlier lineage.
+
+`resolve_*_json_filename` parses a name back into a tag dict, `generate_*` rebuilds names from one, and `generate_version_number` picks the next free version. `banana-convert-tags` rewrites a legacy-named SIMSOPT JSON into this scheme (current hardware layout only; pass `--biotsavart-stage` / `--surface-stage`).
 
 ---
 
@@ -42,16 +80,18 @@ All `banana-*` commands accept `--help`.
 
 | Command | Purpose |
 |---------|---------|
-| `banana-generate-biotsavart` | Build an HBT-EP coil set (TF + banana + proxy + VF) and save as a `BiotSavart` JSON. `--default` regenerates the canonical `biotsavart_init.json`. |
-| `banana-generate-default-surface` | Extract the target plasma surface from `inputs/wout_original.nc` at $s=0.24$, scale to $R_0 = 0.925$ m, and save `inputs/surface_init.json`. |
 | `banana-stage2` | Stage 2 coil-only optimization. |
-| `banana-initialize-boozersurface` | Assemble an unsolved `BoozerSurface` JSON from a `BiotSavart` + a surface, ready for downstream `run_code(...)`. |
+| `banana-singlestage` | Singlestage joint coil + surface optimization. |
+| `banana-singlestage-multithread` / `-openblas` | Threaded singlestage launchers (set thread env, exec the driver). |
+| `banana-initialize-local` | Set up the `local/` tree and write the original BiotSavart / Surface / BoozerSurface inputs. |
+| `banana-initialize-boozersurface` | Assemble and run-code a `BoozerSurface` from a `BiotSavart` + a `Surface`. |
+| `banana-convert-tags` | Rewrite a legacy SIMSOPT JSON filename into the tag scheme. |
+| `banana-generate-boozersurface-finitebuild` | Build a finite-build (multifilament) `BoozerSurface` from a filament one. |
+| `banana-generate-coil-txt-files` | Export coil geometry to text files. |
+| `banana-plot-modB-Bdotn` | Plot $\lvert\mathbf{B}\rvert$, $\mathbf{B}\cdot\hat{\mathbf{n}}/\lvert\mathbf{B}\rvert$, and coil cross-sections for a `BoozerSurface`. |
+| `banana-print-parameters` | Pretty-print coil / surface parameters. |
+| `banana-run-virtual-casing` | Run a virtual-casing calculation from a VMEC wout. |
 | `banana-flip-surfacerzfourier` | Flip a `SurfaceRZFourier` toroidally ($\phi \to -\phi$) via DOF relabel. |
-| `banana-plot-modB-Bdotn` | Plot $\lvert\mathbf{B}\rvert$, $\mathbf{B}\cdot\hat{\mathbf{n}}/\lvert\mathbf{B}\rvert$, and coil cross-sections for a BiotSavart on a target surface. |
-| `banana-print-coil-currents` | Pretty-print all coil currents from a BiotSavart or BoozerSurface JSON. |
-| `banana-print-banana-coil-parameters` | Pretty-print banana coil Fourier order, quadpoint count, and per-coil currents. |
-| `banana-add-proxy-and-vf-coils` | Add proxy + VF coils to an existing BiotSavart (for finite-current scenarios). |
-| `banana-run-virtual-casing` | Run a virtual-casing calculation from a VMEC wout for the finite-current pipeline. |
 
 ---
 
@@ -63,57 +103,55 @@ banana_drivers/
 ├── README.md               # this file
 ├── src/banana_drivers/
 │   ├── hardware.py         # frozen dataclasses: HBT-EP geometry, hardware limits
-│   ├── paths.py            # resolved paths to inputs/, configs
+│   ├── paths.py            # resolved paths to inputs/ and local/
 │   ├── drivers/
-│   │   ├── stage2.py
-│   │   ├── stage2_config.yaml
-│   │   ├── singlestage.py        # WIP — raises at import
-│   │   └── singlestage_config.yaml
-│   ├── scripts/            # one-shot utilities (one CLI per file)
-│   ├── utils/
-│   │   ├── cli.py          # shared argparse parents (coil currents, geometry, IO)
-│   │   ├── coils.py        # coil-set construction
-│   │   ├── surface.py      # surface loading / building / rescaling
-│   │   ├── preprocess.py   # CLI-args → (biotsavart, surface) resolution
-│   │   ├── boozersurface.py
-│   │   ├── plot.py
-│   │   └── io.py           # DriverLog — diagnostics CSV writer
+│   │   ├── stage2.py            # Stage 2: coil-only optimization
+│   │   └── singlestage.py       # Singlestage: joint coil + surface
 │   ├── objectives/
-│   │   ├── cwsobjectives.py        # CWS-frame manufacturability penalties
-│   │   │                            # (PoloidalExtent, ProjectedEllipseWidth, CurveSelfIntersect)
-│   │   └── currentobjectives.py    # ScaledCurrentWrapper for current penalties
-│   └── inputs/             # checked-in inputs (see below)
+│   │   ├── build.py             # build_objective — shared objective assembly (both stages)
+│   │   ├── defaults.py          # default objective weights and targets
+│   │   ├── cwsobjectives.py     # CWS-frame penalties (PoloidalExtent, ProjectedEllipseWidth, CurveSelfIntersect)
+│   │   └── currentobjectives.py # ScaledCurrentWrapper for current penalties
+│   ├── utils/
+│   │   ├── cli.py          # driver_parser, process_driver_args, per-objective parsers
+│   │   ├── tags.py         # filename tag system (resolve / generate / version)
+│   │   ├── stages.py       # stage name constants
+│   │   ├── boozersurface.py # build / rebuild / load BoozerSurface
+│   │   ├── biotsavart.py   # coil-set construction
+│   │   ├── surface.py      # surface load / build / rescale / resolution
+│   │   ├── coils.py, framedcurve.py, finitebuild.py  # coil + finite-build helpers
+│   │   ├── plot.py         # |B|, B·n, cross-section plotting
+│   │   └── io.py           # DriverLog + save_to_json (tag-based filenames)
+│   ├── scripts/            # one-shot utilities (one CLI per file)
+│   └── inputs/             # checked-in canonical inputs (see below)
 └── local/                  # gitignored — working files and run outputs
 ```
 
-`local/` is reserved for the user's working files (modified inputs, scratch outputs) and is gitignored via the `local*/` rule. Drivers default `--output-dir` to the current working directory, so running from `local/outputs/` keeps run artifacts out of the tree.
+`local/` is reserved for the user's working files (modified inputs, scratch outputs) and is gitignored via the `local*/` rule.
 
 ---
 
-## Configs
+## Configuration
 
-Each driver reads weights and targets from a YAML file next to it:
+There is no mandatory per-driver config file. Objective **weights and targets** have defaults in `objectives/defaults.py` and are overridable per-objective on the CLI (`--weight-*`, `--max-*`, `--min-*`). A `--config-file <yaml>` may supply any of the same option names as a YAML block, with explicit CLI flags taking priority.
 
-- `src/banana_drivers/drivers/stage2_config.yaml` — `weights` (sqflux, length, ccdist, curvature, poloidal, width, selfint, currents) and `targets` (length, ccdist, curvature, poloidal, width_max, width_min, selfint).
-- `src/banana_drivers/drivers/singlestage_config.yaml` — same shape; singlestage-specific physics knobs (iota target, BoozerLS constraint weight, Fourier ramp) still being wired in alongside the driver.
-
-Override with `--config <path>`. Penalty thresholds and engineering limits live in `hardware.py`, not the config files — see [Hardware](#hardware) below.
+Engineering **thresholds and limits** (max length/curvature, min coil–coil and coil–surface distances, current bounds) live in `hardware.py`, not in config files — see [Hardware](#hardware).
 
 ---
 
 ## Inputs
 
-`src/banana_drivers/inputs/` holds the canonical, version-controlled inputs shared across all runs:
+`src/banana_drivers/inputs/` holds the canonical, version-controlled inputs shared across runs:
 
 | File | Purpose |
 |------|---------|
 | `wout_original.nc` | VMEC wout the target plasma surface is extracted from (at $s=0.24$, scaled to $R_0=0.925$ m). |
 | `wout_hbt_finite_beta.nc` | Finite-$\beta$ VMEC wout for the finite plasma-current branch. |
-| `input.hbt_finite_beta` | VMEC input file used to produce the finite-$\beta$ wout. |
+| `input.hbt_finite_beta`, `input.hbt_finite_beta_fixed` | VMEC input files used to produce the finite-$\beta$ wout. |
 | `HBT_101393_01.eqdsk` | EFIT g-file (shot 101393); reference equilibrium for the finite-current scenario. |
-| `banana_init_dofs.txt` | Default banana coil CWS Fourier DOFs (simple ellipse). |
+| `original.banana_dofs.yaml` | Default banana coil CWS Fourier DOFs (simple ellipse). |
 
-Run-derived inputs (`biotsavart_init.json`, `surface_init.json`, etc.) are produced by `banana-generate-biotsavart` and `banana-generate-default-surface`. Custom variants (flipped surfaces, alternate init DOFs) should live in `local/inputs/`.
+Run-derived inputs (the original `BiotSavart` / `Surface` / `BoozerSurface` JSONs) are produced by `banana-initialize-local` and written into `local/inputs/`.
 
 ---
 
@@ -122,15 +160,16 @@ Run-derived inputs (`biotsavart_init.json`, `surface_init.json`, etc.) are produ
 `src/banana_drivers/hardware.py` defines frozen dataclasses for the HBT-EP geometry and the engineering limits the drivers enforce. Quick reference (always cross-check the source for the live values):
 
 - **TF coils**: $R_0 = 0.976$ m, $a = 0.400$ m, 20 coils at $-80$ kA each (fixed).
-- **Banana winding surface**: $R_0 = 0.903$ m, $a = 0.142$ m, nfp=5, stellsym (updated 2026-05-26 — prior 0.976 / 0.210 m values are obsolete).
+- **Banana winding surface**: $R_0 = 0.903$ m, $a = 0.142$ m, nfp=5, stellsym. Banana coil count $= 2\,\mathrm{nfp} = 10$.
 - **Banana current limit**: $\lvert I_b \rvert \le 16$ kA per coil.
 - **Geometric limits**: `max_length = 1.9` m, `max_curvature = 100` m$^{-1}$ (≈1 cm bending radius), `min_ccdist = 0.0462` m, `min_csdist = 0.010` m. Curvature uses an $L^4$ norm (`banana_curv_p = 4`).
 - **Target plasma**: $R_0 = 0.92$ m, nfp=5, stellsym.
+- **Full coil set**: 51 coils (20 TF + 10 banana + 1 proxy + 20 VF); indices via `TF_IDX`/`BANANA_IDX`/`PROXY_IDX`/`VF_IDX` in `hardware.py`.
 
-`banana-stage2` enforces these via `QuadraticPenalty` against thresholds drawn from `hardware.py`; weights come from `stage2_config.yaml`.
+The drivers enforce these via `QuadraticPenalty` against thresholds drawn from `hardware.py`; weights come from `objectives/defaults.py` (overridable on the CLI).
 
 ---
 
 ## SIMSOPT fork
 
-Banana coils use `CurveCWSFourierCPP` (the C++-backed CWS curve) and the CWS-frame manufacturability objectives — these live in a project fork of SIMSOPT, not upstream. Branch: `whjh/auglag_banana` on `hayashiw/simsopt`.
+Banana coils use the C++-backed CWS curve and the CWS-frame manufacturability objectives, which live in a project fork of SIMSOPT, not upstream. Branch: `whjh/auglag_banana` on `hayashiw/simsopt`.
