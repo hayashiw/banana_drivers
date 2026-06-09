@@ -11,7 +11,6 @@ from scipy.optimize import minimize
 
 from ..hardware import TF_IDX, N_TF
 from ..objectives import build_objective
-from ..utils.boozersurface import load_boozersurface
 from ..utils.cli import driver_parser, process_driver_args, write_config_yaml
 from ..utils.stages import SINGLESTAGE as STAGE
 from ..utils.constants import MU0

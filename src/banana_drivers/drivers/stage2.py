@@ -8,7 +8,6 @@ EASTERN = ZoneInfo("America/New_York")
 from scipy.optimize import minimize
 
 from ..objectives import build_objective
-from ..utils.boozersurface import load_boozersurface
 from ..utils.cli import driver_parser, process_driver_args, write_config_yaml
 from ..utils.stages import STAGE2 as STAGE
 from ..utils.io import (

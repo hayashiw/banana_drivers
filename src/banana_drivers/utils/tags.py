@@ -1,3 +1,4 @@
+import glob
 import os
 import random
 import re
@@ -203,32 +204,17 @@ def resolve_boozersurface_json_filename(filename: str, enforce_tags: bool = True
     if enforce_tags: check_tags(full_tag_dict)
     return full_tag_dict
 
-def increment_version_number(version_number_str):
-    version_numbers = [int(x) for x in version_number_str.split("_")]
-    version_numbers[-1] += 1
-    return "_".join(str(x) for x in version_numbers)
-
 def generate_version_number(tag_dict: dict[str, int | str], out_dir: str) -> str:
-    version_number_str = tag_dict.get("version_number_str", "0")
-    tag_dict["version_number_str"] = version_number_str
-    _biotsavart_tag, _surface_tag, _boozersurface_tag, _other_tags = generate_boozersurface_tags(tag_dict)
-    filename = ".".join([_biotsavart_tag, _surface_tag, _boozersurface_tag, *_other_tags])
-    filename = os.path.join(out_dir, filename+".json")
-
-    if not os.path.exists(filename):
-        return version_number_str
-    else:
-        next_version_number_str = increment_version_number(version_number_str)
-        tag_dict["version_number_str"] = next_version_number_str
-        _biotsavart_tag, _surface_tag, _boozersurface_tag, _other_tags = generate_boozersurface_tags(tag_dict)
-        filename = ".".join([_biotsavart_tag, _surface_tag, _boozersurface_tag, *_other_tags])
-        filename = os.path.join(out_dir, filename+".json")
+    parent = tag_dict.get("version_number_str", None)
+    prefix = "" if (parent is None) else f"{parent}_"
+    i = 0
+    while True:
+        version_number_str = f"{prefix}{i}"
+        tag_dict["version_number_str"] = version_number_str
+        filename = os.path.join(out_dir, generate_boozersurface_filename(tag_dict))
         if not os.path.exists(filename):
-            return next_version_number_str
-        else:
-            next_version_number_str = f"{version_number_str}_0"
-            tag_dict["version_number_str"] = next_version_number_str
-            return generate_version_number(tag_dict, out_dir)
+            return version_number_str
+        i += 1
 
 def generate_biotsavart_tag(
     tag_dict: dict[str, int | str],
