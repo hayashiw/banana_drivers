@@ -112,7 +112,6 @@ parvmecinfo.txt
 threed1.*
 
 # Post process files
-*.csv
 *.ipynb
 *.ipynb_checkpoints
 
@@ -123,12 +122,8 @@ registry.db*
 *.vtu
 *.vts
 
-# Log file from banana driver
-log.txt
-
 # Local markdown files
 *.local.md
 
 # Analysis output files
-# *.png
 *.npz
