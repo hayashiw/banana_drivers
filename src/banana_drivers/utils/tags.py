@@ -481,7 +481,9 @@ def update_boozersurface_tags_from_args(
         volume_target_str = args["volume_target_str"].replace(".", "d").replace("%", "pct")
     new_tag_dict = load_tags_from_boozersurface(boozersurface, volume_target_str=volume_target_str)
     new_tag_dict["biotsavart"]["tag"] = old_tag_dict["biotsavart"]["tag"]
+    new_tag_dict["biotsavart"]["stage"] = old_tag_dict["biotsavart"]["stage"]
     new_tag_dict["surface"]["tag"] = old_tag_dict["surface"]["tag"]
+    new_tag_dict["surface"]["stage"] = old_tag_dict["surface"]["stage"]
     new_tag_dict["boozersurface"]["tag"] = old_tag_dict["boozersurface"]["tag"]
     return new_tag_dict, boozersurface
 
