@@ -10,11 +10,12 @@ from simsopt.field import BiotSavart
 from simsopt.geo import BoozerSurface, Surface
 
 from ..hardware import hbt_banana_fb, BANANA_IDX, PROXY_IDX, N_BANANA, N_COILS, N_FB_COILS
+from ..utils.boozersurface import load_boozersurface
 
 FLOAT_PATTERN = r"\d+d\d+|\d+"
 
 BIOTSAVART_PATTERNS = OrderedDict(
-    tag=r"^(?P<tag>[a-zA-Z0-9]+)$",
+    tag=r"^(?P<tag>[a-zA-Z0-9_]+)$",
     proxy_current_ka_str=rf"proxy(?P<proxy_current_ka_str>{FLOAT_PATTERN})kA",
     order=r"^o(?P<order>\d+)$",
     nqpts=r"^nqpts(?P<nqpts>\d+)$",
@@ -26,7 +27,7 @@ BIOTSAVART_PATTERNS = OrderedDict(
 ENFORCE_BIOTSAVART_TAGS = ["tag", "proxy_current_ka_str", "order", "stage"]
 
 SURFACE_PATTERNS = OrderedDict(
-    tag=r"^(?P<tag>[a-zA-Z0-9]+)$",
+    tag=r"^(?P<tag>[a-zA-Z0-9_]+)$",
     mpol=r"m(?P<mpol>\d+)$",
     ntor=r"n(?P<ntor>\d+)$",
     nphi=r"np(?P<nphi>\d+)$",
@@ -37,15 +38,17 @@ SURFACE_PATTERNS = OrderedDict(
 ENFORCE_SURFACE_TAGS = ["tag", "mpol", "ntor", "stage"]
 
 BOOZERSURFACE_PATTERNS = OrderedDict(
-    tag=r"^(?P<tag>boozersurface)$",
+    tag=r"^(?P<tag>boozersurface|state)$",
     constraint_weight_str=rf"^cw(?P<constraint_weight_str>Exact|{FLOAT_PATTERN})$",
-    volume_target_str=rf"^vol(?P<volume_target_str>Surface|{FLOAT_PATTERN})$"
+    volume_target_str=rf"^vol(?P<volume_target_str>Surface|({FLOAT_PATTERN})(pct)?)$"
 )
 
 ENFORCE_BOOZERSURFACE_TAGS = ["tag", "constraint_weight_str", "volume_target_str"]
 
+# Version number can be vers0, vers1, etc.
+# In the case of branching versions (new run with vers1 even though vers2 already exists), can be vers1_1, vers1_2, etc.
 OTHER_PATTERNS = OrderedDict(
-    version_number=r"^vers(?P<version_number>\d+)$",
+    version_number_str=r"^vers(?P<version_number_str>\d+(?:_\d+)*)$",
     iter_number=r"^iter(?P<iter_number>\d+)$"
 )
 
@@ -63,7 +66,7 @@ CONVERTERS = OrderedDict(
     ntheta=int,
     constraint_weight_str=str,
     volume_target_str=str,
-    version_number=int,
+    version_number_str=str,
     iter_number=int,
 )
 
@@ -82,12 +85,12 @@ INVERTERS = dict(
     ntheta=lambda x: f"nt{x}",
     constraint_weight_str=lambda x: f"cw{x}",
     volume_target_str=lambda x: f"vol{x}",
-    version_number=lambda x: f"vers{x}",
+    version_number_str=lambda x: f"vers{x}",
     iter_number=lambda x: f"iter{x}"
 )
 
 def _resolve_tags(tag: str, source: str) -> dict:
-    assert source in ["biotsavart", "surface", "boozersurface"], f"Expected `source` to be 'biotsavart', 'surface' or 'boozersurface', got {source}"
+    assert source in ["biotsavart", "surface", "boozersurface", "state"], f"Expected `source` to be 'biotsavart', 'surface', 'boozersurface' or 'state', got {source}"
     if source == "biotsavart":
         patterns = BIOTSAVART_PATTERNS
     elif source == "surface":
@@ -111,7 +114,7 @@ def _resolve_tags(tag: str, source: str) -> dict:
                 
     if not len(base_tag): base_tag = [source]
     tag_dict["tag"] = "_".join(base_tag)
-    return tag_dict
+    return {f"{source}": tag_dict}
 
 def _resolve_other_tags(tags: list[str]) -> dict:
     tag_dict = {}
@@ -128,6 +131,60 @@ def _resolve_other_tags(tags: list[str]) -> dict:
             tag_dict["other"].append(_tag)
     return tag_dict
 
+def check_tags(tag_dict: dict[str, int | str]) -> None:
+    err = False
+    msg = {}
+
+    enforce_biotsavart_tags = ENFORCE_BIOTSAVART_TAGS.copy()
+    if ("biotsavart" in tag_dict) and ("finitebuild" in tag_dict["biotsavart"]):
+        enforce_biotsavart_tags += ["finitebuild"]
+
+    for enforce_tag_list, pattern_dict, label in [
+        (enforce_biotsavart_tags, BIOTSAVART_PATTERNS, "biotsavart"),
+        (ENFORCE_SURFACE_TAGS, SURFACE_PATTERNS, "surface"),
+        (ENFORCE_BOOZERSURFACE_TAGS, BOOZERSURFACE_PATTERNS, "boozersurface")
+    ]:
+        if label not in tag_dict: continue
+        for tag in enforce_tag_list:
+            if tag not in tag_dict[label]:
+                if label not in msg: msg[label] = ""
+                msg[label] += f"    Missing tag: {tag}\n"
+                err = True
+                continue
+            pattern = pattern_dict[tag]
+            fullmatch = re.fullmatch(pattern, INVERTERS[tag](tag_dict[label][tag]))
+            if not fullmatch:
+                if label not in msg: msg[label] = ""
+                msg[label] += f"    Invalid tag format [{tag}]: {INVERTERS[tag](tag_dict[label][tag])}, expected pattern: {pattern}\n"
+                err = True
+
+    verbose_err_msg = "\n".join([f"{label} tags:\n{_msg}" for label, _msg in msg.items()])
+    assert (not err), f"Missing tags:\n{verbose_err_msg}"
+
+def resolve_biotsavart_json_filename(filename: str, enforce_tags: bool = True) -> dict:
+    biotsavart_tag, *other = os.path.basename(filename).removesuffix(".json").split(".")
+
+    biotsavart_tag_dict = _resolve_tags(biotsavart_tag, "biotsavart")
+    other_tags_dict = _resolve_other_tags(other)
+
+    full_tag_dict = dict()
+    full_tag_dict.update(biotsavart_tag_dict)
+    full_tag_dict.update(other_tags_dict)
+    if enforce_tags: check_tags(full_tag_dict)
+    return full_tag_dict
+
+def resolve_surface_json_filename(filename: str, enforce_tags: bool = True) -> dict:
+    surface_tag, *other = os.path.basename(filename).removesuffix(".json").split(".")
+
+    surface_tag_dict = _resolve_tags(surface_tag, "surface")
+    other_tags_dict = _resolve_other_tags(other)
+    
+    full_tag_dict = dict()
+    full_tag_dict.update(surface_tag_dict)
+    full_tag_dict.update(other_tags_dict)
+    if enforce_tags: check_tags(full_tag_dict)
+    return full_tag_dict
+
 def resolve_boozersurface_json_filename(filename: str, enforce_tags: bool = True) -> dict:
     biotsavart_tag, surface_tag, boozersurface_tag, *other = \
         os.path.basename(filename).removesuffix(".json").split(".")
@@ -137,92 +194,195 @@ def resolve_boozersurface_json_filename(filename: str, enforce_tags: bool = True
     boozersurface_tag_dict = _resolve_tags(boozersurface_tag, "boozersurface")
     other_tags_dict = _resolve_other_tags(other)
 
-    if enforce_tags:
-        err = False
-        msg = {}
-        for enforce_tag_list, tag_dict, label in [
-            (ENFORCE_BIOTSAVART_TAGS, biotsavart_tag_dict, "biotsavart"),
-            (ENFORCE_SURFACE_TAGS, surface_tag_dict, "surface"),
-            (ENFORCE_BOOZERSURFACE_TAGS, boozersurface_tag_dict, "boozersurface")
-        ]:
-            for tag in enforce_tag_list:
-                if tag not in tag_dict:
-                    if label not in msg: msg[label] = ""
-                    msg[label] += f"    Missing tag: {tag}\n"
-                    err = True
-        assert (not err), f"Missing tags:\n{msg}"
-
-    full_tag_dict = dict(
-        biotsavart=biotsavart_tag_dict,
-        surface=surface_tag_dict,
-        boozersurface=boozersurface_tag_dict,
-    )
+    full_tag_dict = dict()
+    full_tag_dict.update(biotsavart_tag_dict)
+    full_tag_dict.update(surface_tag_dict)
+    full_tag_dict.update(boozersurface_tag_dict)
     full_tag_dict.update(other_tags_dict)
+    if enforce_tags: check_tags(full_tag_dict)
     return full_tag_dict
 
-def generate_surface_json_filename(tag_dict: dict[str, int | str], minimal=False) -> str:
+def increment_version_number(version_number_str):
+    version_numbers = [int(x) for x in version_number_str.split("_")]
+    version_numbers[-1] += 1
+    return "_".join(str(x) for x in version_numbers)
+
+def generate_version_number(tag_dict: dict[str, int | str], out_dir: str) -> str:
+    version_number_str = tag_dict.get("version_number_str", "0")
+    tag_dict["version_number_str"] = version_number_str
+    _biotsavart_tag, _surface_tag, _boozersurface_tag, _other_tags = generate_boozersurface_tags(tag_dict)
+    filename = ".".join([_biotsavart_tag, _surface_tag, _boozersurface_tag, *_other_tags])
+    filename = os.path.join(out_dir, filename+".json")
+
+    if not os.path.exists(filename):
+        return version_number_str
+    else:
+        next_version_number_str = increment_version_number(version_number_str)
+        tag_dict["version_number_str"] = next_version_number_str
+        _biotsavart_tag, _surface_tag, _boozersurface_tag, _other_tags = generate_boozersurface_tags(tag_dict)
+        filename = ".".join([_biotsavart_tag, _surface_tag, _boozersurface_tag, *_other_tags])
+        filename = os.path.join(out_dir, filename+".json")
+        if not os.path.exists(filename):
+            return next_version_number_str
+        else:
+            next_version_number_str = f"{version_number_str}_0"
+            tag_dict["version_number_str"] = next_version_number_str
+            return generate_version_number(tag_dict, out_dir)
+
+def generate_biotsavart_tag(
+    tag_dict: dict[str, int | str],
+    minimal: bool = True,
+    enforce_tags: bool = True,
+) -> tuple[str, list[str]]:
+    if "biotsavart" not in tag_dict: tag_dict = dict(biotsavart=tag_dict)
+    if enforce_tags: check_tags(tag_dict)
+
+    enforce_biotsavart_tags = ENFORCE_BIOTSAVART_TAGS.copy()
+    if "finitebuild" in tag_dict["biotsavart"]:
+        enforce_biotsavart_tags += ["finitebuild"]
+
+    tags = []
+    for key in BIOTSAVART_PATTERNS:
+        if minimal and (key not in enforce_biotsavart_tags): continue
+        if key in tag_dict["biotsavart"]:
+            tags.append(INVERTERS[key](tag_dict["biotsavart"][key]))
+    if (
+        ("proxy_current_ka_str" not in tag_dict["biotsavart"]) and
+        ("proxy_current_ka" in tag_dict["biotsavart"])
+    ):
+        key = "proxy_current_ka"
+        tags.append(INVERTERS[key](tag_dict["biotsavart"][key]))
+    biotsavart_tag = "_".join(tags)
+
+    err = False
+    msg = ""
+    other_tags = []
+    for key in OTHER_PATTERNS:
+        if key in tag_dict:
+            pattern = OTHER_PATTERNS[key]
+            fullmatch = re.fullmatch(pattern, INVERTERS[key](tag_dict[key]))
+            if not fullmatch:
+                err = True
+                msg += f"Invalid tag format for {key}: {INVERTERS[key](tag_dict[key])}, expected pattern: {pattern}\n"
+            else:
+                other_tags.append(INVERTERS[key](tag_dict[key]))
+    
+    if err:
+        verbose_err_msg = f"Error generating BiotSavart tags:\n{msg}"
+        raise ValueError(verbose_err_msg)
+
+    return biotsavart_tag, other_tags
+
+def generate_surface_tag(
+    tag_dict: dict[str, int | str],
+    minimal: bool = True,
+    enforce_tags: bool = True,
+) -> tuple[str, list[str]]:
+    if "surface" not in tag_dict: tag_dict = dict(surface=tag_dict)
+    if enforce_tags: check_tags(tag_dict)
+
     tags = []
     for key in SURFACE_PATTERNS:
         if minimal and (key not in ENFORCE_SURFACE_TAGS): continue
-        if key in tag_dict:
-            tags.append(INVERTERS[key](tag_dict[key]))
-    filename = "_".join(tags) + ".json"
-    return filename
+        if key in tag_dict["surface"]:
+            tags.append(INVERTERS[key](tag_dict["surface"][key]))
+    surface_tag = "_".join(tags)
 
-def generate_biotsavart_json_filename(tag_dict: dict[str, int | str], minimal=False) -> str:
-    tags = []
-    for key in BIOTSAVART_PATTERNS:
-        if minimal and (key not in ENFORCE_BIOTSAVART_TAGS): continue
+    err = False
+    msg = ""
+    other_tags = []
+    for key in OTHER_PATTERNS:
         if key in tag_dict:
-            tags.append(INVERTERS[key](tag_dict[key]))
-    if (
-        ("proxy_current_ka_str" not in tag_dict) and
-        ("proxy_current_ka" in tag_dict)
-    ):
-        key = "proxy_current_ka"
-        tags.append(INVERTERS[key](tag_dict[key]))
-    filename = "_".join(tags) + ".json"
-    return filename
+            pattern = OTHER_PATTERNS[key]
+            fullmatch = re.fullmatch(pattern, INVERTERS[key](tag_dict[key]))
+            if not fullmatch:
+                err = True
+                msg += f"Invalid tag format for {key}: {INVERTERS[key](tag_dict[key])}, expected pattern: {pattern}\n"
+            else:
+                other_tags.append(INVERTERS[key](tag_dict[key]))
+    
+    if err:
+        verbose_err_msg = f"Error generating Surface tags:\n{msg}"
+        raise ValueError(verbose_err_msg)
 
-def generate_boozersurface_json_filename(tag_dict: dict[str, int | str], minimal=False) -> str:
-    tags = []
+    return surface_tag, other_tags
+
+def generate_boozersurface_tags(
+    tag_dict: dict[str, int | str],
+    minimal: bool = True,
+    enforce_tags: bool = True,
+) -> tuple[str, str, str, list[str]]:
+    if enforce_tags: check_tags(tag_dict)
+
+    err = False
+    msg = ""
     if "biotsavart" in tag_dict:
-        biotsavart_tags = []
-        for key in BIOTSAVART_PATTERNS:
-            if minimal and (key not in ENFORCE_BIOTSAVART_TAGS): continue
-            if key in tag_dict["biotsavart"]:
-                biotsavart_tags.append(INVERTERS[key](tag_dict["biotsavart"][key]))
-        if (
-            ("proxy_current_ka_str" not in tag_dict["biotsavart"]) and
-            ("proxy_current_ka" in tag_dict["biotsavart"])
-        ):
-            key = "proxy_current_ka"
-            biotsavart_tags.append(INVERTERS[key](tag_dict["biotsavart"][key]))
-        tags.append("_".join(biotsavart_tags))
+        # Ignore the BiotSavart version_number_str and iter_number tags
+        biotsavart_tag, _ = generate_biotsavart_tag(tag_dict["biotsavart"], minimal=minimal, enforce_tags=enforce_tags)
+    else:
+        err = True
+        msg += "Missing `biotsavart` tags\n"
+
     if "surface" in tag_dict:
-        surface_tags = []
-        for key in SURFACE_PATTERNS:
-            if minimal and (key not in ENFORCE_SURFACE_TAGS): continue
-            if key in tag_dict["surface"]:
-                surface_tags.append(INVERTERS[key](tag_dict["surface"][key]))
-        tags.append("_".join(surface_tags))
+        # Ignore the Surface version_number_str and iter_number tags
+        surface_tag, _ = generate_surface_tag(tag_dict["surface"], minimal=minimal, enforce_tags=enforce_tags)
+    else:
+        err = True
+        msg += "Missing `surface` tags\n"
+
     if "boozersurface" in tag_dict:
         boozersurface_tags = []
         for key in BOOZERSURFACE_PATTERNS:
             if minimal and (key not in ENFORCE_BOOZERSURFACE_TAGS): continue
             if key in tag_dict["boozersurface"]:
                 boozersurface_tags.append(INVERTERS[key](tag_dict["boozersurface"][key]))
-        tags.append("_".join(boozersurface_tags))
+        boozersurface_tag = "_".join(boozersurface_tags)
+    else:
+        err = True
+        msg += "Missing `boozersurface` tags\n"
+    
+    other_tags = []
     for key in OTHER_PATTERNS:
         if key in tag_dict:
-            other_tag = INVERTERS[key](tag_dict[key])
-            tags.append(other_tag)
-    filename = ".".join(tags) + ".json"
-    return filename
+            pattern = OTHER_PATTERNS[key]
+            fullmatch = re.fullmatch(pattern, INVERTERS[key](tag_dict[key]))
+            if not fullmatch:
+                err = True
+                msg += f"Invalid tag format for {key}: {INVERTERS[key](tag_dict[key])}, expected pattern: {pattern}\n"
+            else:
+                other_tags.append(INVERTERS[key](tag_dict[key]))
+    
+    if err:
+        verbose_err_msg = f"Error generating BoozerSurface tags:\n{msg}"
+        raise ValueError(verbose_err_msg)
+    
+    return biotsavart_tag, surface_tag, boozersurface_tag, other_tags
+
+def generate_boozersurface_filename(tag_dict: dict[str, int | str], minimal: bool = True, enforce_tags: bool = True) -> str:
+    biotsavart_tag, surface_tag, boozersurface_tag, other_tags = generate_boozersurface_tags(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
+    filename = ".".join([biotsavart_tag, surface_tag, boozersurface_tag])
+    if len(other_tags):
+        filename += "." + ".".join(other_tags)
+    return filename+".json"
+
+def generate_random_tag(n: int = 8, a_vs_d: float = 2/3) -> str:
+    a_vs_d = max(0, min(1, a_vs_d))
+    alphas_n = int(n * a_vs_d)
+    digits_n = n - alphas_n
+    alpha_characters = random.choices(string.ascii_letters, k=alphas_n)
+    digit_characters = random.choices(string.digits, k=digits_n)
+    characters = alpha_characters + digit_characters
+    random.shuffle(characters)
+    return "".join(characters)
 
 def load_tags_from_biotsavart(biotsavart: str | BiotSavart) -> dict[str, int | str]:
     if isinstance(biotsavart, str):
+        filename = biotsavart
         biotsavart = load(biotsavart)
+        partial_tag_dict = resolve_biotsavart_json_filename(filename, enforce_tags=False)
+        biotsavart_tag = partial_tag_dict["biotsavart"]["tag"]
+    else:
+        biotsavart_tag = "biotsavart"
     
     coils = biotsavart.coils
     ncoils = len(coils)
@@ -244,11 +404,16 @@ def load_tags_from_biotsavart(biotsavart: str | BiotSavart) -> dict[str, int | s
         proxy_current_ka_str=proxy_current_ka_str,
     )
     if is_finitebuild: tag_dict["finitebuild"] = "finitebuild"
-    return tag_dict
+    return {f"{biotsavart_tag}": tag_dict}
 
 def load_tags_from_surface(surface: str | Surface) -> dict[str, int | str]:
     if isinstance(surface, str):
+        filename = surface
         surface = load(surface)
+        partial_tag_dict = resolve_surface_json_filename(filename, enforce_tags=False)
+        surface_tag = partial_tag_dict["surface"]["tag"]
+    else:
+        surface_tag = "surface"
 
     mpol = surface.mpol
     ntor = surface.ntor
@@ -261,42 +426,45 @@ def load_tags_from_surface(surface: str | Surface) -> dict[str, int | str]:
         nphi=nphi,
         ntheta=ntheta,
     )
-    return tag_dict
+    return {f"{surface_tag}": tag_dict}
 
-def load_tags_from_boozersurface(boozersurface: str | BoozerSurface, volume: float | None = None) -> dict[str, int | str]:
-    if volume == 0: volume = None
+def load_tags_from_boozersurface(boozersurface: str | BoozerSurface, volume_target_str: str = "Surface") -> dict[str, int | str]:
     if isinstance(boozersurface, str):
         filename = boozersurface
         partial_tag_dict = resolve_boozersurface_json_filename(filename, enforce_tags=False)
         biotsavart_tag = partial_tag_dict["biotsavart"]["tag"]
         surface_tag = partial_tag_dict["surface"]["tag"]
         boozersurface_tag = partial_tag_dict["boozersurface"]["tag"]
+        biotsavart_stage = partial_tag_dict["biotsavart"]["stage"]
+        surface_stage = partial_tag_dict["surface"]["stage"]
+        volume_target_str = partial_tag_dict["boozersurface"]["volume_target_str"] # overrides input kwarg
         boozersurface = load(boozersurface)
     else:
         biotsavart_tag = "biotsavart"
         boozersurface_tag = "boozersurface"
         surface_tag = "surface"
+        biotsavart_stage = "init"
+        surface_stage = "init"
         partial_tag_dict = dict()
-    biotsavart_tag_dict = dict(tag=biotsavart_tag)
-    surface_tag_dict = dict(tag=surface_tag)
+    biotsavart_tag_dict = dict(tag=biotsavart_tag, stage=biotsavart_stage)
+    surface_tag_dict = dict(tag=surface_tag, stage=surface_stage)
     boozersurface_tag_dict = dict(tag=boozersurface_tag)
 
     constraint_weight = boozersurface.constraint_weight
     constraint_weight_str = "Exact" if (constraint_weight is None) else str(round(constraint_weight, 6)).replace(".", "d")
-    volume_str = "Surface" if (volume is None) else str(round(volume, 6)).replace(".", "d")
     boozersurface_tag_dict.update(
         constraint_weight_str=constraint_weight_str,
-        volume_target_str=volume_str
+        volume_target_str=volume_target_str
     )
 
     biotsavart = boozersurface.biotsavart
     biotsavart_tag_dict.update(
-        load_tags_from_biotsavart(biotsavart)
+        load_tags_from_biotsavart(biotsavart)["biotsavart"]
     )
 
     surface = boozersurface.surface
     surface_tag_dict.update(
-        load_tags_from_surface(surface)
+        load_tags_from_surface(surface)["surface"]
     )
 
     tag_dict = dict(
@@ -310,13 +478,21 @@ def load_tags_from_boozersurface(boozersurface: str | BoozerSurface, volume: flo
     
     return tag_dict
 
-def generate_random_tag(n: int = 8, a_vs_d: float = 2/3) -> str:
-    a_vs_d = max(0, min(1, a_vs_d))
-    alphas_n = int(n * a_vs_d)
-    digits_n = n - alphas_n
-    alpha_characters = random.choices(string.ascii_letters, k=alphas_n)
-    digit_characters = random.choices(string.digits, k=digits_n)
-    characters = alpha_characters + digit_characters
-    random.shuffle(characters)
-    return "".join(characters)
+def update_boozersurface_tags_from_args(
+    args: dict,
+) -> dict[str, int | str]:
+    assert "boozersurface_file" in args, "Expected 'boozersurface_file' in args"
+
+    boozersurface_file = args["boozersurface_file"]
+    boozersurface = load_boozersurface(boozersurface_file, args=args)
+    old_tag_dict = load_tags_from_boozersurface(boozersurface_file)
+    if "volume_target_str" not in args:
+        volume_target_str = old_tag_dict["boozersurface"]["volume_target_str"]
+    else:
+        volume_target_str = args["volume_target_str"].replace(".", "d").replace("%", "pct")
+    new_tag_dict = load_tags_from_boozersurface(boozersurface, volume_target_str=volume_target_str)
+    new_tag_dict["biotsavart"]["tag"] = old_tag_dict["biotsavart"]["tag"]
+    new_tag_dict["surface"]["tag"] = old_tag_dict["surface"]["tag"]
+    new_tag_dict["boozersurface"]["tag"] = old_tag_dict["boozersurface"]["tag"]
+    return new_tag_dict, boozersurface
 

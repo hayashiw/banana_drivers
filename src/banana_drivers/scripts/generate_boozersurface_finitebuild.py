@@ -25,6 +25,7 @@ from ..hardware import (
 )
 from ..utils.finitebuild import create_cws_multifilament_grid
 from ..utils.boozersurface import build_boozersurface
+from ..utils.tags import resolve_boozersurface_json_filename, generate_boozersurface_filename
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Generate a finite build BoozerSurface JSON file.")
@@ -77,13 +78,12 @@ def main(argv=None):
         proxy_coil=proxy_coils[0],
     )
 
-    base = os.path.basename(boozersurface_file)
-    biotsavart_tag, surface_tag, *remaining = os.path.basename(boozersurface_file).split(".")
-    biotsavart_tag += "_finitebuild"
-    new_base = f"{biotsavart_tag}.{surface_tag}." + ".".join(remaining)
+    tag_dict = resolve_boozersurface_json_filename(boozersurface_file)
+    tag_dict["biotsavart"]["finitebuild"] = "finitebuild"
+    filename = generate_boozersurface_filename(tag_dict)
 
     out_dir = args.out_dir or os.path.dirname(boozersurface_file)
-    savefile = os.path.join(out_dir, new_base)
+    savefile = os.path.join(out_dir, filename)
     boozersurface_finitebuild.save(savefile)
     print(f"Saved BoozerSurface finite build to {savefile}")
     return 0

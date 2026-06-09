@@ -23,6 +23,4 @@ SRC_INPUTS_DIR        = os.path.join(SOURCE_DIR, "inputs")
 WOUT_ORIGINAL         = os.path.join(SRC_INPUTS_DIR, "wout_original.nc")
 BANANA_DOFS_INIT_FILE = os.path.join(SRC_INPUTS_DIR, "original.banana_dofs.yaml")
 
-DRIVERS_DIR        = os.path.join(SOURCE_DIR, "drivers")
-STAGE2_CONFIG      = os.path.join(DRIVERS_DIR, "stage2_config.yaml")
-SINGLESTAGE_CONFIG = os.path.join(DRIVERS_DIR, "singlestage_config.yaml")
+# DRIVERS_DIR           = os.path.join(SOURCE_DIR, "drivers")

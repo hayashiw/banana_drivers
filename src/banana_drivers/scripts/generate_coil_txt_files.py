@@ -6,11 +6,15 @@ from simsopt._core import load
 from simsopt.field import BiotSavart
 from simsopt.geo import BoozerSurface
 
-from banana_drivers.hardware import (
+from ..hardware import (
     hbt_banana_ws,
     BANANA_IDX,
     N_BANANA,
     N_COILS
+)
+from ..utils.tags import (
+    resolve_boozersurface_json_filename,
+    resolve_biotsavart_json_filename,
 )
 
 HEADER = (
@@ -54,18 +58,18 @@ def compare_major_radius(curve, tol=1e-6):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     input_file = args.input_file
-    out_dir = args.out_dir
-    if out_dir is None:
-        biotsavart_tag = os.path.basename(input_file).split(".")[0]
-        out_dir = os.path.join(os.getcwd(), f"{biotsavart_tag}.coils")
 
     obj = load(input_file)
     if isinstance(obj, BoozerSurface):
         biotsavart = obj.biotsavart
+        biotsavart_tag_dict = resolve_boozersurface_json_filename(input_file)["biotsavart"]
     elif isinstance(obj, BiotSavart):
         biotsavart = obj
+        biotsavart_tag_dict = resolve_biotsavart_json_filename(input_file)["biotsavart"]
     else:
         raise ValueError(f"Unsupported input file type: {type(obj)}")
+    biotsavart_tag = biotsavart_tag_dict["tag"]
+    out_dir = args.out_dir or os.path.join(os.getcwd(), f"{biotsavart_tag}_coils")
     
     coils = biotsavart.coils
     ncoils = len(coils)

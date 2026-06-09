@@ -3,14 +3,17 @@ import contextlib
 import io
 import json
 import os
-import re
 import sys
 import traceback
 
 from simsopt.field import BiotSavart
 from simsopt.geo import BoozerSurface, Surface
 
-from .tags import generate_json_filename
+from .tags import (
+    generate_biotsavart_tag,
+    generate_boozersurface_tags,
+    generate_surface_tag
+)
 
 class DriverLog:
     def __init__(self, log_path=None, *, comment_prefix="# ", enabled=True):
@@ -103,9 +106,11 @@ def stdout_to_log(log, *, tap=None, capture_stderr=True):
 
 def save_to_json(
     obj: BoozerSurface | BiotSavart | Surface,
-    tag_dict: dict
+    tag_dict: dict,
+    minimal: bool = True,
+    enforce_tags: bool = True,
+    out_dir: str = ".",
 ):
-    savefile = generate_json_filename(tag_dict)
     if isinstance(obj, BoozerSurface):
         err = False
         for key in ["biotsavart", "surface", "boozersurface"]:
@@ -113,14 +118,24 @@ def save_to_json(
                 print(f"Missing tags for {key}")
                 err = True
         assert (not err), "Missing required tags"
+        biotsavart_tag, surface_tag, boozersurface_tag, other_tags = generate_boozersurface_tags(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
+        savefile = ".".join([biotsavart_tag, surface_tag, boozersurface_tag])
+        if len(other_tags):
+            savefile += "." + ".".join(other_tags)
+        savefile = os.path.join(out_dir, savefile+".json")
         obj.save(savefile)
         if not obj.need_to_run_code:
             res = obj.res
             iota = res["iota"]
             G = res["G"]
-            statefile = savefile.replace("boozersurface", "state")
+            targetlabel = obj.targetlabel
+            state_tag = boozersurface_tag.replace("boozersurface", "state")
+            statefile = ".".join([biotsavart_tag, surface_tag, state_tag])
+            if len(other_tags):
+                statefile += "." + ".".join(other_tags)
+            statefile = os.path.join(out_dir, statefile+".json")
             with open(statefile, "w") as f:
-                json.dump(dict(iota=iota, G=G), f, indent=2)
+                json.dump(dict(iota=iota, G=G, targetlabel=targetlabel), f, indent=2)
     elif isinstance(obj, (BiotSavart, Surface)):
         err = False
         if (
@@ -130,10 +145,21 @@ def save_to_json(
             print(f"Missing tags for {type(obj).__name__}")
             err = True
         assert (not err), "Missing required tags"
+        if isinstance(obj, BiotSavart):
+            biotsavart_tag, other_tags = generate_biotsavart_tag(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
+            savefile = os.path.join(out_dir, biotsavart_tag + ".biotsavart")
+            if len(other_tags):
+                savefile += "." + ".".join(other_tags)
+            savefile += ".json"
+        else:
+            surface_tag, other_tags = generate_surface_tag(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
+            savefile = os.path.join(out_dir, surface_tag + ".surface")
+            if len(other_tags):
+                savefile += "." + ".".join(other_tags)
+            savefile += ".json"
         obj.save(savefile)
     else:
         raise ValueError(f"Unsupported object type: {type(obj)}")
     
     return savefile
-
     

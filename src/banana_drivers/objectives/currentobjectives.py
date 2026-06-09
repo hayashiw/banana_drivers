@@ -35,3 +35,6 @@ class ScaledCurrentWrapper(Optimizable):
     def dJ(self):
         sign = np.sign(self.scaled_current.get_value())
         return sign * self.scaled_current.vjp(np.array([1.0]))
+
+    def signed_current(self):
+        return self.scaled_current.get_value()

@@ -1,3 +1,5 @@
+import inspect
+
 from simsopt._core import load
 from simsopt.field import BiotSavart, Coil
 from simsopt.geo import (
@@ -52,6 +54,7 @@ def rebuild_boozersurface(
     *,
     constraint_weight: float | None = None, # If None, inherits from boozersurface. Use 0 to set BoozerExact.
     targetlabel: float | None = None,
+    volume_target_str: str | None = None, # overrides targetlabel
     proxy_coil_from_surface: bool = True,
     tf_current_ka: float | None = None,
     tf_fix_current: bool | None = None,
@@ -121,7 +124,27 @@ def rebuild_boozersurface(
     I = current * MU0
 
     label = Volume(new_surface)
-    if targetlabel is None: targetlabel = new_surface.volume()
+    if volume_target_str is not None:
+        if volume_target_str.endswith("%"):
+            frac = float(volume_target_str[:-1]) / 100
+            targetlabel = frac * new_surface.volume()
+        else:
+            targetlabel = float(volume_target_str)
+    elif targetlabel is None:
+        targetlabel = new_surface.volume()
     new_boozersurface = BoozerSurface(new_biotsavart, new_surface, label=label, targetlabel=targetlabel, constraint_weight=constraint_weight, options=OPTION, I=I)
 
     return new_boozersurface
+
+def load_boozersurface(filename, args=None):
+    init_boozersurface = load(filename)
+    if (args is None) or (len(args) == 0):
+        boozersurface = init_boozersurface
+    else:
+        kwargs = {
+            key: val for key, val in args.items() if key in
+            list(inspect.signature(rebuild_boozersurface).parameters.keys())
+        }
+        boozersurface = rebuild_boozersurface(init_boozersurface, **kwargs)
+    return boozersurface
+

@@ -102,9 +102,11 @@ def plot_cross_sections(fig, ax, surface, nphis=4):
     ax.set_box_aspect(1)
     ax.set_aspect("equal")
 
-def plotly_coils(biotsavart, fig=None, width=6):
+def plotly_coils(biotsavart, fig=None, width=6, skip_coils=[]):
     if fig is None:
         fig = go.Figure()
+
+    skip_coils = [label.lower() for label in skip_coils]
 
     coils = biotsavart.coils
     tf_coils = coils[TF_IDX:TF_IDX+N_TF]
@@ -112,12 +114,13 @@ def plotly_coils(biotsavart, fig=None, width=6):
     proxy_coils = coils[PROXY_IDX:PROXY_IDX+N_PROXY]
     vf_coils = coils[VF_IDX:VF_IDX+N_VF]
 
-    for coilset, color in [
-        (tf_coils, "black"),
-        (banana_coils, "red"),
-        (proxy_coils, "blue"),
-        (vf_coils, "gray"),
+    for coilset, label, color in [
+        (tf_coils, "TF", "black"),
+        (banana_coils, "Banana", "red"),
+        (proxy_coils, "Proxy", "blue"),
+        (vf_coils, "VF", "gray"),
     ]:
+        if label.lower() in skip_coils: continue
         for coil in coilset:
             gamma = coil.curve.gamma()
             x, y, z = np.append(gamma, gamma[:1], axis=0).T
@@ -128,28 +131,58 @@ def plotly_coils(biotsavart, fig=None, width=6):
             ))
     return fig
 
-def plotly_surface(surface, fig=None, biotsavart=None, surfacecolors="Bdotn_norm", colorscale="Viridis"):
+def plotly_surface(label, fig=None, surface=None, biotsavart=None):
+    label = label.lower()
+    assert label in ["modb", "bdotn_norm", "vv", "vessel", "shell", "winding_surface", "ws"], f"Expected label in ['modB', 'Bdotn_norm', 'vv', 'vessel', 'shell', 'winding_surface', 'ws'], got {label}"
     if fig is None:
         fig = go.Figure()
 
-    if biotsavart is not None:
-        assert surfacecolors in ["modB", "Bdotn_norm"], f"Expected surfacecolors in ['modB', 'Bdotn_norm'], got {surfacecolors}"
+    if (label in ["modb", "bdotn_norm"]):
+        assert (biotsavart is not None) and (surface is not None), f"biotsavart and surface must be provided for label '{label}'"
         biotsavart.set_points(surface.gamma().reshape(-1, 3))
         B = biotsavart.B().reshape(surface.gamma().shape)
         modB = np.linalg.norm(B, axis=-1)
-        if surfacecolors == "modB":
-            surfacecolors = modB
-        elif surfacecolors == "Bdotn_norm":
-            surfacecolors = np.sum(B * surface.unitnormal(), axis=-1) / modB
+        if label == "modb":
+            surfacecolors = modB.T
+            colorscale = "Viridis"
+        elif label == "bdotn_norm":
+            surfacecolors = (np.sum(B * surface.unitnormal(), axis=-1) / modB).T
+            colorscale = "RdBu"
+        x, y, z = surface.gamma().T
+        opacity = 1.0
+    else:
+        ntheta = 128
+        nphi = 256
+        phi = np.linspace(0, 2*np.pi, nphi)
+        theta = np.linspace(0, 2*np.pi, ntheta)
+        if label in ["vv", "vessel"]:
+            major_radius = hbt_vv.major_radius
+            minor_radius = hbt_vv.minor_radius
+        elif label == "shell":
+            major_radius = hbt_shell.major_radius
+            minor_radius = hbt_shell.minor_radius
+        elif label in ["winding_surface", "ws"]:
+            major_radius = hbt_banana_ws.major_radius
+            minor_radius = hbt_banana_ws.minor_radius
+        phi_grid, theta_grid = np.meshgrid(phi, theta)
+        x = (major_radius + minor_radius * np.cos(theta_grid)) * np.cos(phi_grid)
+        y = (major_radius + minor_radius * np.cos(theta_grid)) * np.sin(phi_grid)
+        z = minor_radius * np.sin(theta_grid)
 
-    x, y, z = surface.gamma().T
-    if surfacecolors is None:
-        surfacecolors = np.sqrt(x**2 + y**2)
+        surfacecolors = None
+        opacity = 0.2
+        surfacecolors = np.zeros(z.shape)
+        colorscale = [
+            [0, "rgb(128, 128, 128)"],
+            [1, "rgb(128, 128, 128)"]
+        ]
+
     fig.add_trace(go.Surface(
         x=x,
         y=y,
         z=z,
         surfacecolor=surfacecolors,
-        colorscale=colorscale
+        colorscale=colorscale,
+        opacity=opacity,
     ))
     return fig

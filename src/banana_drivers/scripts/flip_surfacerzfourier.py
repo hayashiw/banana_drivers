@@ -34,9 +34,8 @@ def flip_surface_dofs(surf_original: SurfaceRZFourier) -> SurfaceRZFourier:
 
     return surf_flipped
 
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     file = args.file
     surf_original = load(file)
     if not isinstance(surf_original, SurfaceRZFourier):

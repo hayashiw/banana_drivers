@@ -3,24 +3,29 @@ import os
 from simsopt.geo import SurfaceRZFourier
 
 from ..paths import INIT_DIRS, WOUT_ORIGINAL
-from ..hardware import DEFAULT_TF_CURRENT_KA, DEFAULT_BANANA_CURRENT_KA, TF_IDX, N_TF
+from ..hardware import DEFAULT_TF_CURRENT_KA, DEFAULT_BANANA_CURRENT_KA
 from ..utils.surface import DEFAULT_NPHI, DEFAULT_NTHETA, change_surface_resolution
 from ..utils.biotsavart import build_biotsavart
 from ..utils.boozersurface import build_boozersurface
 from ..utils.constants import MU0
 from ..utils.io import save_to_json
+from ..utils.tags import (
+    load_tags_from_biotsavart,
+    load_tags_from_surface,
+    load_tags_from_boozersurface,
+)
 
 DEFAULT_WOUT_S = 0.24
 DEFAULT_WOUT_SCALE = 0.925
 
-def main():
+def main(argv=None):
     print("Setting up local directories and initial inputs for banana_drivers")
-    def make_dir(path):
-        if not os.path.exists(path):
-            os.makedirs(path)
-            print(f"Created directory: {path}")
     for directory in INIT_DIRS:
-        make_dir(directory)
+        try:
+            os.makedirs(directory)
+            print(f"Created directory: {directory}")
+        except OSError as e:
+            print(f"Directory {directory} already exists.")
     print("")
 
     _, INPUTS_DIR, BOOZERSURFACES_DIR, SURFACES_DIR, BIOTSAVARTS_DIR, _, _ = INIT_DIRS
@@ -34,7 +39,10 @@ def main():
     )
     surface.set_dofs(surface.get_dofs() * DEFAULT_WOUT_SCALE / surface.major_radius())
     surface = change_surface_resolution(surface, mpol=12, ntor=12)
-    savefile = save_to_json(surface, "original", init_opt="init", out_dir=SURFACES_DIR)
+    tag_dict = load_tags_from_surface(surface)
+    tag_dict["surface"]["tag"] = "original"
+    tag_dict["surface"]["stage"] = "init"
+    savefile = save_to_json(surface, tag_dict, minimal=False, out_dir=SURFACES_DIR)
     print(f"Initial surface saved to: {savefile}")
 
     proxy_R = surface.major_radius()
@@ -46,22 +54,21 @@ def main():
         (proxy_R, proxy_Z),
         0.0
     )
-    savefile = save_to_json(biotsavart, "original", init_opt="init", out_dir=BIOTSAVARTS_DIR)
+    tag_dict = load_tags_from_biotsavart(biotsavart)
+    tag_dict["biotsavart"]["tag"] = "original"
+    tag_dict["biotsavart"]["stage"] = "init"
+    savefile = save_to_json(biotsavart, tag_dict, minimal=False, out_dir=BIOTSAVARTS_DIR)
     print(f"Initial biotsavart saved to: {savefile}")
 
     boozersurface = build_boozersurface(biotsavart, surface, constraint_weight=1e2)
-    savefile = save_to_json(boozersurface, "original", "original", init_opt="init", out_dir=BOOZERSURFACES_DIR)
+    tag_dict = load_tags_from_boozersurface(boozersurface, volume_target_str="Surface")
+    tag_dict["biotsavart"]["tag"] = "original"
+    tag_dict["biotsavart"]["stage"] = "init"
+    tag_dict["surface"]["tag"] = "original"
+    tag_dict["surface"]["stage"] = "init"
+    savefile = save_to_json(boozersurface, tag_dict, minimal=False, out_dir=BOOZERSURFACES_DIR)
     print(f"Initial boozersurface saved to: {savefile}")
 
-    inputs_markdown_file = os.path.join(INPUTS_DIR, "inputs.md")
-    if not os.path.exists(inputs_markdown_file):
-        with open(inputs_markdown_file, "w") as f:
-            f.write(
-                "| Label | biotsavart | surface |\n"
-                "|------|------------|----------|\n"
-                "| original | Initial coils: simple ellipse, default values for coil currents | Original wout with s=0.24 and DOFs scaled to 0.925 m major radius |\n"
-            )
-    print(f"Inputs markdown file saved to: {inputs_markdown_file}")
     return 0
 
 if __name__ == "__main__":

@@ -9,20 +9,23 @@ from simsopt.geo import (
     CurveCurveDistance,
     CurveLength,
     CurveSurfaceDistance,
-    Surface
+    Surface,
+    boozer_surface_residual,
 )
 
-from banana_drivers.hardware import (
+from ..hardware import (
     hbt_banana_ws,
     hardware_limits,
     TF_IDX,
     BANANA_IDX,
     PROXY_IDX,
     VF_IDX,
-    N_COILS,
+    N_TF,
     N_BANANA,
-    N_VF
+    N_VF,
+    N_COILS,
 )
+from ..utils.constants import MU0
 
 savefile = None
 def _print(*args):
@@ -59,6 +62,7 @@ def print_biotsavart_metrics(biotsavart, nindent=0):
     indent_print(f"BiotSavart object", nindent=nindent)
     coils = biotsavart.coils
     ncoils = len(coils)
+    # TODO: put in support for finitebuild
     indent_print(f"Number of coils: {ncoils} (Expected: {N_COILS})", nindent=nindent)
     for idx, label in [(TF_IDX, "TF"), (BANANA_IDX, "BANANA"), (PROXY_IDX, "PROXY"), (VF_IDX, "VF")]:
         indent_print(f"{label} coil(s)", nindent=nindent)
@@ -142,7 +146,7 @@ def print_surface_metrics(surface, nindent=0):
     indent_print(f"Max quadpoints_phi: {quadpoints_phi.max():.5f} (Should be <= {expected_max:.5f})", nindent=nindent+4)
     indent_print("")
 
-def print_boozersurface_metrics(boozersurface, nindent=0):
+def print_boozersurface_metrics(boozersurface, iota=None, sign_g=-1, nindent=0):
     indent_print(f"BoozerSurface object", nindent=nindent)
     constraint_weight = boozersurface.constraint_weight
     is_boozer_exact = constraint_weight is None
@@ -151,9 +155,9 @@ def print_boozersurface_metrics(boozersurface, nindent=0):
     surface = boozersurface.surface
     print_biotsavart_metrics(biotsavart, nindent=nindent+4)
     print_surface_metrics(surface, nindent=nindent+4)
-    print_curve_surface_metrics(biotsavart, surface, nindent=nindent+4)
+    print_curve_surface_metrics(biotsavart, surface, iota=iota, sign_g=sign_g, nindent=nindent+4)
 
-def print_curve_surface_metrics(biotsavart, surface, nindent=0):
+def print_curve_surface_metrics(biotsavart, surface, iota=None, sign_g=-1, nindent=0):
     indent_print("Coil-Surface metrics", nindent=nindent)
     if isinstance(biotsavart, Surface) and isinstance(surface, BiotSavart):
         biotsavart, surface = surface, biotsavart
@@ -175,16 +179,32 @@ def print_curve_surface_metrics(biotsavart, surface, nindent=0):
     csdistance = CurveSurfaceDistance(curves, surface, 0).shortest_distance()
 
     indent_print(f"max(|B|):             {modB.max():.5f} T", nindent=nindent+4)
-    indent_print(f"<|B·n| / |B|>:        {Bdotn_norm_avg:.5f} +- {Bdotn_norm_err:.5f}", nindent=nindent+4)
+    indent_print(f"<|B·n| / |B|>:        {Bdotn_norm_avg:.5f} ± {Bdotn_norm_err:.5f}", nindent=nindent+4)
     indent_print(f"max(|B·n| / |B|):     {Bdotn_norm_max:.5f}", nindent=nindent+4)
     indent_print(f"QS error:             {QS_error:.5f}", nindent=nindent+4)
     indent_print(f"Coil-plasma distance: {csdistance:.5f} m (Must be greater than {hardware_limits.min_csdist})", nindent=nindent+4)
+
+    if iota is not None:
+        tf_coils = biotsavart.coils[TF_IDX:TF_IDX+N_TF]
+        total_current = sum(abs(coil.current.get_value()) for coil in tf_coils)
+        proxy_current = biotsavart.coils[PROXY_IDX].current.get_value() if len(biotsavart.coils) > PROXY_IDX else 0
+        G = sign_g * total_current * MU0
+        I = proxy_current * MU0
+        r, = boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=True, I=I)
+        r = np.linalg.norm(r.reshape(surface.gamma().shape), axis=-1)
+        r_max = r.max()
+        r_avg = r.mean()
+        r_err = r.std()
+        indent_print(f"max Boozer residual:  {r_max:.5e}", nindent=nindent+4)
+        indent_print(f"avg Boozer residual:  {r_avg:.5e} ± {r_err:.5e}", nindent=nindent+4)
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Print parameters of SIMSOPT objects from JSON files.")
     parser.add_argument("json_files", nargs="+", help="JSON files containing SIMSOPT objects.")
     parser.add_argument("--save-file", type=str, default=None,
                         help="If filepath is provided, save output to file. Default is None (no saving).")
+    parser.add_argument("--iota", type=float, default=None, help="If specified, also prints the Boozer residual for the corresponding iota value. Requires a BoozerSurface JSON file to be provided.")
+    parser.add_argument("--sign-g", type=int, choices=[-1, 1], default=-1, help="Sign of G for BoozerSurface residual calculation. Also requires iota. Default is -1.")
     return parser
 
 def main(argv=None):
@@ -201,18 +221,9 @@ def main(argv=None):
         elif isinstance(obj, Surface):
             print_surface_metrics(obj, nindent=0)
         elif isinstance(obj, BoozerSurface):
-            print_boozersurface_metrics(obj, nindent=0)
+            print_boozersurface_metrics(obj, iota=args.iota, sign_g=args.sign_g, nindent=0)
         else:
             _print("Unknown object class.")
-
-    if len(files) == 2:
-        obj1 = load(files[0])
-        obj2 = load(files[1])
-        if (
-            (isinstance(obj1, BiotSavart) and isinstance(obj2, Surface)) or
-            (isinstance(obj1, Surface) and isinstance(obj2, BiotSavart))
-        ):
-            print_curve_surface_metrics(obj1, obj2)
 
     return 0
 

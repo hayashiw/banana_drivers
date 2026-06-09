@@ -6,6 +6,8 @@ from simsopt.geo import SurfaceRZFourier, SurfaceXYZTensorFourier
 
 surface_classes = (SurfaceRZFourier, SurfaceXYZTensorFourier)
 
+DEFAULT_MPOL = 8
+DEFAULT_NTOR = 8
 DEFAULT_NPHI = 65
 DEFAULT_NTHETA = 64
 

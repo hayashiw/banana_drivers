@@ -9,6 +9,7 @@ from simsopt._core import load
 
 from ..utils.plot import plot_modB, plot_Bdotn, plot_cross_sections
 from ..utils.surface import change_surface_range
+from ..utils.tags import resolve_boozersurface_json_filename, generate_boozersurface_tags
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -22,8 +23,7 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     boozersurface_file = os.path.abspath(args.boozersurface_file)
-    
-    biotsavart_tag, surface_tag = os.path.basename(boozersurface_file).split(".")[:2]
+    tag_dict = resolve_boozersurface_json_filename(boozersurface_file)
 
     boozersurface = load(boozersurface_file)
     biotsavart = boozersurface.biotsavart
@@ -35,11 +35,14 @@ def main(argv=None):
     plot_Bdotn(fig, axes[1], biotsavart, surface, finitebuild=args.finitebuild)
     plot_cross_sections(fig, axes[2], surface)
 
-    savefile = f"{biotsavart_tag}.{surface_tag}.modB_Bdotn.png"
+    biotsavart_tag, surface_tag, boozersurface_tag, other_tags = generate_boozersurface_tags(tag_dict, minimal=False)
+    savefile = f"{biotsavart_tag}.{surface_tag}.{boozersurface_tag}"
+    if len(other_tags):
+        savefile += "." + ".".join(other_tags)
+    savefile += ".modB_Bdotn.png"
     fig.savefig(savefile, dpi=args.dpi)
     print(f"Saved figure -> {savefile}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
