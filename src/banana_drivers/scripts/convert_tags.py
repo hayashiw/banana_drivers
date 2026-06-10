@@ -5,6 +5,8 @@ from simsopt._core import load
 from simsopt.field import BiotSavart
 from simsopt.geo import BoozerSurface, Surface
 
+from ..utils.biotsavart import rebuild_biotsavart
+from ..utils.boozersurface import rebuild_boozersurface
 from ..utils.io import save_to_json
 from ..utils.tags import (
     load_tags_from_biotsavart,
@@ -43,6 +45,7 @@ def main(argv=None):
     obj = load(file)
     if isinstance(obj, BiotSavart):
         print("Input file is a BiotSavart object.")
+        obj = rebuild_biotsavart(obj)
         tag_dict = load_tags_from_biotsavart(obj)
         tag_dict["biotsavart"]["tag"] = biotsavart_tag
         tag_dict["biotsavart"]["stage"] = args.biotsavart_stage
@@ -55,6 +58,7 @@ def main(argv=None):
         savefile = save_to_json(obj, tag_dict)
     elif isinstance(obj, BoozerSurface):
         print("Input file is a BoozerSurface object.")
+        obj = rebuild_boozersurface(obj)
         tag_dict = load_tags_from_boozersurface(obj)
         tag_dict["biotsavart"]["tag"] = biotsavart_tag
         tag_dict["biotsavart"]["stage"] = args.biotsavart_stage
