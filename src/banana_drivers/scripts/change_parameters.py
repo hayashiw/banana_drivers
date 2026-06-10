@@ -40,16 +40,24 @@ def build_parser():
         ],
     )
     parser.add_argument("file", type=str, help="Path to the SIMSOPT JSON file.")
+    parser.add_argument("--full-name", action="store_true", help="If set, will use `minimal=False` in the filename generation. Default: False (minimal=True)")
+    parser.add_argument("--overwrite", action="store_true", help="If the intended save file exists, will raise an error if False. Set to True to overwrite existing files. Default: False")
     return parser
+
+SKIP_ARGS = ["file", "full_name", "overwrite"]
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    inputs = {key: val for key, val in vars(args).items() if val is not None}
+    inputs = {}
+    for key, val in vars(args).items():
+        if val is None: continue
+        if hasattr(val, "__len__") and len(val) == 0: continue
+        inputs[key] = val
     print(f"Inputs and requested parameter changes:")
     for key, val in inputs.items():
         print(f"    {key}: {val}")
     nargs = len(inputs)
-    assert nargs > 1, "No parameters specified to change. Please provide at least one parameter to change."
+    assert nargs > len(SKIP_ARGS), "No parameters specified to change. Please provide at least one parameter to change."
     
     file = inputs["file"]
     obj = load(file)
@@ -79,7 +87,7 @@ def main(argv=None):
             nargs_obj += 1
     assert nargs_obj > 0, f"No valid parameters specified to change for type {type(obj).__name__}. Please provide at least one valid parameter."
 
-    kwarg_inputs = {key: val for key, val in inputs.items() if key != "file"}
+    kwarg_inputs = {key: val for key, val in inputs.items() if key not in SKIP_ARGS}
     kwargs = {key: val for key, val in kwarg_inputs.items() if key in keyword_args}
     new_obj = rebuild_func(obj, **kwargs)
     new_tag_dict = load_tag_func(new_obj)
@@ -130,9 +138,10 @@ def main(argv=None):
             print(f"Tag parameters specified:")
             for key, val in tag_kwargs.items():
                 print(f"    {key}: {val}")
-            print(f"Changing tag parameters creates a new file.")
+            print(f"Changing tag parameters creates a new file with the same base tags.")
 
-    savefile = save_to_json(new_obj, new_tag_dict, minimal=False)
+    minimal = not args.full_name
+    savefile = save_to_json(new_obj, new_tag_dict, minimal=minimal, overwrite=args.overwrite)
     print(f"Saved updated file to: {savefile}")
 
     return 0

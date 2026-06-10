@@ -26,6 +26,7 @@ def build_parser():
     parser.add_argument("--volume-target-str", type=str, default=None, help="If specified, use the target volume passed in as a float or a percentage. Otherwise, uses the surface volume as the target volume.")
     parser.add_argument("--mpol", type=int, default=None, help="Number of poloidal modes for the BoozerSurface. Default: inherit from surface file.")
     parser.add_argument("--ntor", type=int, default=None, help="Number of toroidal modes for the BoozerSurface. Default: inherit from surface file.")
+    parser.add_argument("--skip-solve", action="store_true", help="If set, will skip running the Boozer solve and just save the assembled BoozerSurface with the initial guess for iota and G.")
     return parser
 
 def main(argv=None):
@@ -105,6 +106,14 @@ def main(argv=None):
     G = args.sign_g * total_current * MU0
     _print(f"G: {G}")
 
+    if args.skip_solve:
+        boozersurface.save(savefile)
+        _print(f"Saved initialized BoozerSurface to {savefile} without running solve.")
+        with open(statefile, "w") as f:
+            json.dump({"iota": args.iota, "G": G}, f, indent=2)
+        _print(f"Saved iota and G to {statefile}")
+        return 0
+    
     res = boozersurface.run_code(args.iota, G)
     success = res["success"]
     if success:

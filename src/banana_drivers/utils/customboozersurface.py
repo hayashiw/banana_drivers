@@ -148,6 +148,12 @@ class CustomBoozerSurface(Optimizable):
                 options['limited_memory'] = False
             if 'weight_inv_modB' not in options:
                 options['weight_inv_modB'] = True
+            if 'method' not in options:
+                options['method'] = 'L-BFGS-B' if options['limited_memory'] else 'BFGS'
+            else:
+                assert options['method'].lower() in [
+                    'l-bfgs-b', 'bfgs', 'manual', 'lm', 'trf', 'dogbox'
+                ], f"Invalid method {options['method']}. Valid options are 'l-bfgs-b', 'bfgs', 'manual', 'lm', 'trf', and 'dogbox'."
         self.options = options
 
         if print_func is None:
@@ -200,18 +206,24 @@ class CustomBoozerSurface(Optimizable):
             # you need a label constraint for a BoozerLS surface
             assert self.constraint_weight is not None
 
-            # first try BFGS.  You could also try L-BFGS by setting limited_memory=True in the options dictionary, which might be faster.  However, BFGS appears
-            # to generally result in solutions closer to optimality.
-            res = self.minimize_boozer_penalty_constraints_LBFGS(constraint_weight=self.constraint_weight, iota=iota, G=G,
-                                                                 tol=self.options['bfgs_tol'], maxiter=self.options['bfgs_maxiter'], limited_memory=self.options['limited_memory'],
-                                                                 weight_inv_modB=self.options['weight_inv_modB'], bounds=self.options.get('bounds', None))
+            if self.options["method"].lower() in ['l-bfgs-b', 'bfgs']:
+                # first try BFGS.  You could also try L-BFGS by setting limited_memory=True in the options dictionary, which might be faster.  However, BFGS appears
+                # to generally result in solutions closer to optimality.
+                res = self.minimize_boozer_penalty_constraints_LBFGS(constraint_weight=self.constraint_weight, iota=iota, G=G,
+                                                                    tol=self.options['bfgs_tol'], maxiter=self.options['bfgs_maxiter'], limited_memory=self.options['limited_memory'],
+                                                                    weight_inv_modB=self.options['weight_inv_modB'], bounds=self.options.get('bounds', None))
+            elif self.options["method"].lower() in ['manual', 'lm', 'trf', 'dogbox']:
+                res = self.minimize_boozer_penalty_constraints_ls(constraint_weight=self.constraint_weight, iota=iota, G=G,
+                                                                    tol=self.options['bfgs_tol'], maxiter=self.options['bfgs_maxiter'], method=self.options["method"],
+                                                                    weight_inv_modB=self.options['weight_inv_modB'], bounds=self.options.get('bounds', None))
             iota, G = res['iota'], res['G']
 
-            ## polish off using Newton's method
-            self.need_to_run_code = True
-            res = self.minimize_boozer_penalty_constraints_newton(constraint_weight=self.constraint_weight, iota=iota, G=G,
-                                                                  tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'],
-                                                                  weight_inv_modB=self.options['weight_inv_modB'])
+            if self.options["newton_maxiter"] > 0:
+                ## polish off using Newton's method
+                self.need_to_run_code = True
+                res = self.minimize_boozer_penalty_constraints_newton(constraint_weight=self.constraint_weight, iota=iota, G=G,
+                                                                    tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'],
+                                                                    weight_inv_modB=self.options['weight_inv_modB'])
             return res
 
     def boozer_penalty_constraints_vectorized(self, dofs, derivatives=0, constraint_weight=1., optimize_G=False, weight_inv_modB=True):
@@ -449,7 +461,7 @@ class CustomBoozerSurface(Optimizable):
             tracker["evals"] += 1
             r, J = self.boozer_penalty_constraints_vectorized(x, derivatives=1, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
             line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
-            self.print_func(f"0,{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
+            self.print_func(f"{method_int},{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
             return r, J
         
         def callback(x):
@@ -457,11 +469,12 @@ class CustomBoozerSurface(Optimizable):
             tracker["evals"] = 0
             r, J = self.boozer_penalty_constraints_vectorized(x, derivatives=1, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
             line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
-            self.print_func(f"0,{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
+            self.print_func(f"{method_int},{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
 
         if bounds is not None:
             limited_memory = True # L-BFGS-B is required for bounds
         method = 'L-BFGS-B' if limited_memory else 'BFGS'
+        method_int = {'bfgs': 0, 'l-bfgs-b': 1}[method.lower()]
         options = {'maxiter': maxiter, 'gtol': tol}
         if limited_memory:
             options['maxcor'] = 200
@@ -471,10 +484,10 @@ class CustomBoozerSurface(Optimizable):
         self.print_func(f"I (plasma_current * mu0) = {self.I}")
         self.print_func(f"targetlabel = {self.targetlabel}")
         self.print_func(f"{method} (BoozerLS) solve")
-        self.print_func(f"is_newton,time,iters,evals,r,|J|,{line},label", data=True)
+        self.print_func(f"method,time,iters,evals,r,|J|,{line},label", data=True)
         r, J = self.boozer_penalty_constraints_vectorized(x, derivatives=1, constraint_weight=constraint_weight, optimize_G=G is not None, weight_inv_modB=weight_inv_modB)
         line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
-        self.print_func(f"0,{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
+        self.print_func(f"{method_int},{time.monotonic() - t0},{tracker['iters']},{tracker['evals']},{r},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
         res = minimize(
             fun, x, jac=True, method=method,
             options=options, bounds=bounds, callback=callback)
@@ -550,9 +563,9 @@ class CustomBoozerSurface(Optimizable):
         self.print_func(f"I (plasma_current * mu0) = {self.I}")
         self.print_func(f"targetlabel = {self.targetlabel}")
         self.print_func(f"NEWTON (BoozerLS) solve")
-        self.print_func(f"is_newton,time,iters,evals,r,|J|,{line},label")
+        self.print_func(f"method,time,iters,evals,r,|J|,{line},label")
         line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
-        self.print_func(f"1,{time.monotonic() - t0},{tracker['iters']},0,{val},{norm},{line},{self.label.J()}", data=True)
+        self.print_func(f"2,{time.monotonic() - t0},{tracker['iters']},0,{val},{norm},{line},{self.label.J()}", data=True)
         while i < maxiter and norm > tol:
             d2val += stab*np.identity(d2val.shape[0])
             dx = np.linalg.solve(d2val, dval)
@@ -564,7 +577,7 @@ class CustomBoozerSurface(Optimizable):
             i = i+1
             tracker["iters"] = i
             line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
-            self.print_func(f"1,{time.monotonic() - t0},{i},0,{val},{norm},{line},{self.label.J()}", data=True)
+            self.print_func(f"2,{time.monotonic() - t0},{i},0,{val},{norm},{line},{self.label.J()}", data=True)
         self.print_func("done")
 
         # Get residual for output - vectorized version returns scalar objective
@@ -594,7 +607,7 @@ class CustomBoozerSurface(Optimizable):
 
         return res
 
-    def minimize_boozer_penalty_constraints_ls(self, tol=1e-12, maxiter=10, constraint_weight=1., iota=0., G=None, method='lm', weight_inv_modB=True):
+    def minimize_boozer_penalty_constraints_ls(self, tol=1e-12, maxiter=10, constraint_weight=1., iota=0., G=None, method='lm', weight_inv_modB=True, bounds=None):
         """
         This function does the same as :mod:`minimize_boozer_penalty_constraints_LBFGS`, but instead of LBFGS it
         uses a nonlinear least squares algorithm when ``method='lm'``.  Options for the method 
@@ -626,11 +639,29 @@ class CustomBoozerSurface(Optimizable):
         if not self.need_to_run_code:
             return self.res
 
+        if bounds is None: bounds = (-np.inf, np.inf)
+
         s = self.surface
         if G is None:
             x = np.concatenate((s.get_dofs(), [iota]))
         else:
             x = np.concatenate((s.get_dofs(), [iota, G]))
+
+        t0 = time.monotonic()
+
+        method = method.lower()
+        tracker = dict(iters=0)
+        line = "iota" if G is None else "iota,G"
+        self.print_func(f"I (plasma_current * mu0) = {self.I}")
+        self.print_func(f"targetlabel = {self.targetlabel}")
+        self.print_func(f"{method} (BoozerLS) solve")
+        self.print_func(f"method,time,iters,evals,r,|J|,{line},label", data=True)
+        line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
+        r, J = self._get_residual_vector_and_jacobian(
+            x, constraint_weight, G is not None, weight_inv_modB)
+        method_int = {'manual': 4, 'lm': 5, 'trf': 6, 'dogbox': 7}[method]
+        self.print_func(f"{method_int},{time.monotonic() - t0},{tracker['iters']},0,{np.linalg.norm(r)},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
+
         norm = 1e10
         if method == 'manual':
             i = 0
@@ -641,10 +672,12 @@ class CustomBoozerSurface(Optimizable):
             JTJ = J.T@J
             norm = np.linalg.norm(b)
             while i < maxiter and norm > tol:
+                tracker["iters"] += 1
                 dx = np.linalg.solve(JTJ + lam * np.diag(np.diag(JTJ)), b)
                 x -= dx
                 r, J = self._get_residual_vector_and_jacobian(
                     x, constraint_weight, G is not None, weight_inv_modB)
+                self.print_func(f"{method_int},{time.monotonic() - t0},{tracker['iters']},0,{np.linalg.norm(r)},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
                 b = J.T@r
                 JTJ = J.T@J
                 norm = np.linalg.norm(b)
@@ -666,14 +699,19 @@ class CustomBoozerSurface(Optimizable):
             return resdict
 
         def fun(x): 
-            return self._get_residual_vector_and_jacobian(
-                x, constraint_weight, G is not None, weight_inv_modB)[0]
+            tracker["iters"] += 1
+            r, J = self._get_residual_vector_and_jacobian(
+                x, constraint_weight, G is not None, weight_inv_modB)
+            line = f"{x[-1]}" if G is None else f"{x[-2]},{x[-1]}"
+            self.print_func(f"{method_int},{time.monotonic() - t0},{tracker['iters']},0,{np.linalg.norm(r)},{np.linalg.norm(J)},{line},{self.label.J()}", data=True)
+            return r
 
         def jac(x): 
             return self._get_residual_vector_and_jacobian(
                 x, constraint_weight, G is not None, weight_inv_modB)[1]
 
-        res = least_squares(fun, x, jac=jac, method=method, ftol=tol, xtol=tol, gtol=tol, x_scale=1.0, max_nfev=maxiter)
+        if method == "lm": bounds = (-np.inf, np.inf)  # least_squares does not support bounds for 'lm' method
+        res = least_squares(fun, x, jac=jac, method=method, ftol=tol, xtol=tol, gtol=tol, x_scale=1.0, max_nfev=maxiter, bounds=bounds)
         resdict = {
             "info": res, "residual": res.fun, "gradient": res.grad, "jacobian": res.jac, "success": res.status > 0,
             "G": None,
@@ -942,9 +980,9 @@ class CustomBoozerSurface(Optimizable):
         self.print_func(f"I (plasma_current * mu0) = {self.I}")
         self.print_func(f"targetlabel = {self.targetlabel}")
         self.print_func(f"NEWTON (BoozerExact) solve")
-        self.print_func(f"time,iters,r,|J|,iota,G,label", data=True)
+        self.print_func(f"method,time,iters,evals,r,|J|,iota,G,label", data=True)
         t0 = time.monotonic()
-        self.print_func(f"{time.monotonic() - t0},{tracker['iters']},{np.linalg.norm(r)},{np.linalg.norm(J)},{iota},{G},{self.label.J()}")
+        self.print_func(f"3,{time.monotonic() - t0},{tracker['iters']},0,{np.linalg.norm(r)},{np.linalg.norm(J)},{iota},{G},{self.label.J()}", data=True)
         while i < maxiter:
             if s.stellsym:
                 b = np.concatenate((r[mask], [(label.J()-self.targetlabel)]))
@@ -973,7 +1011,7 @@ class CustomBoozerSurface(Optimizable):
             i += 1
             r, J = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1, I=self.I)
             tracker['iters'] = i
-            self.print_func(f"{time.monotonic() - t0},{tracker['iters']},{np.linalg.norm(r)},{np.linalg.norm(J)},{iota},{G},{self.label.J()}", data=True)
+            self.print_func(f"3,{time.monotonic() - t0},{tracker['iters']},0,{np.linalg.norm(r)},{np.linalg.norm(J)},{iota},{G},{self.label.J()}", data=True)
         self.print_func("done")
 
         if s.stellsym:

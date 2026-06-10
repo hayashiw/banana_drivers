@@ -5,14 +5,15 @@ import json
 import os
 import sys
 import traceback
+import warnings
 
 from simsopt.field import BiotSavart
 from simsopt.geo import BoozerSurface, Surface
 
 from .tags import (
-    generate_biotsavart_tag,
-    generate_boozersurface_tags,
-    generate_surface_tag
+    generate_biotsavart_filename,
+    generate_surface_filename,
+    generate_boozersurface_filename,
 )
 
 class DriverLog:
@@ -110,7 +111,10 @@ def save_to_json(
     minimal: bool = True,
     enforce_tags: bool = True,
     out_dir: str = ".",
+    overwrite: bool = False,
 ):
+    statefile = None
+    statefile_exists = False
     if isinstance(obj, BoozerSurface):
         err = False
         for key in ["biotsavart", "surface", "boozersurface"]:
@@ -118,24 +122,27 @@ def save_to_json(
                 print(f"Missing tags for {key}")
                 err = True
         assert (not err), "Missing required tags"
-        biotsavart_tag, surface_tag, boozersurface_tag, other_tags = generate_boozersurface_tags(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
-        savefile = ".".join([biotsavart_tag, surface_tag, boozersurface_tag])
-        if len(other_tags):
-            savefile += "." + ".".join(other_tags)
-        savefile = os.path.join(out_dir, savefile+".json")
-        obj.save(savefile)
+        savefile = generate_boozersurface_filename(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
         if not obj.need_to_run_code:
+            state_tag_dict = dict(
+                biotsavart=tag_dict["biotsavart"],
+                surface=tag_dict["surface"],
+                boozersurface=dict(
+                    tag="state",
+                    constraint_weight_str=tag_dict["boozersurface"]["constraint_weight_str"],
+                    volume_target_str=tag_dict["boozersurface"]["volume_target_str"],
+                ),
+            )
+            for key, val in tag_dict.items():
+                if key not in state_tag_dict:
+                    state_tag_dict[key] = val
+            statefile = generate_boozersurface_filename(state_tag_dict, minimal=minimal, enforce_tags=enforce_tags)
+            statefile = os.path.join(out_dir, statefile)
             res = obj.res
             iota = res["iota"]
             G = res["G"]
             targetlabel = obj.targetlabel
-            state_tag = boozersurface_tag.replace("boozersurface", "state")
-            statefile = ".".join([biotsavart_tag, surface_tag, state_tag])
-            if len(other_tags):
-                statefile += "." + ".".join(other_tags)
-            statefile = os.path.join(out_dir, statefile+".json")
-            with open(statefile, "w") as f:
-                json.dump(dict(iota=iota, G=G, targetlabel=targetlabel), f, indent=2)
+            statefile_exists = os.path.exists(statefile)
     elif isinstance(obj, (BiotSavart, Surface)):
         err = False
         if (
@@ -146,20 +153,23 @@ def save_to_json(
             err = True
         assert (not err), "Missing required tags"
         if isinstance(obj, BiotSavart):
-            biotsavart_tag, other_tags = generate_biotsavart_tag(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
-            savefile = os.path.join(out_dir, biotsavart_tag + ".biotsavart")
-            if len(other_tags):
-                savefile += "." + ".".join(other_tags)
-            savefile += ".json"
+            savefile = generate_biotsavart_filename(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
         else:
-            surface_tag, other_tags = generate_surface_tag(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
-            savefile = os.path.join(out_dir, surface_tag + ".surface")
-            if len(other_tags):
-                savefile += "." + ".".join(other_tags)
-            savefile += ".json"
-        obj.save(savefile)
+            savefile = generate_surface_filename(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
     else:
         raise ValueError(f"Unsupported object type: {type(obj)}")
+    savefile = os.path.join(out_dir, savefile)
+    if os.path.exists(savefile):
+        if overwrite:
+            warnings.warn(f"Save file {savefile} already exists and will be overwritten.")
+        else:
+            raise FileExistsError(f"Save file {savefile} already exists. Use `overwrite=True` to overwrite existing files.")
+    obj.save(savefile)
+    if statefile:
+        if statefile_exists: # Fine to overwrite, just notify user but no need to warn
+            print(f"State file {statefile} already exists and will be overwritten.")
+        with open(statefile, "w") as f:
+            json.dump(dict(iota=iota, G=G, targetlabel=targetlabel), f, indent=2)
     
     return savefile
     

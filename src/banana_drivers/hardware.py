@@ -87,6 +87,9 @@ class HBTVFCoils:
     def __iter__(self):
         return zip(self.rs, self.zs, self.sign_curr)
 
+# Empirical value from HBT-EP experiments
+VF_TO_PROXY_CURRENT_RATIO = 1/6.5
+
 hbt_vv          = HBTVacuumVessel()
 hbt_shell       = HBTShell()
 hbt_tf          = HBTTFCoils()

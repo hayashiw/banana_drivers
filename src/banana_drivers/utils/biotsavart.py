@@ -11,7 +11,7 @@ from .coils import (
     extract_banana_dofs,
 )
 from ..hardware import (
-    hbt_shell, hbt_banana_ws,
+    hbt_shell, hbt_banana_ws, VF_TO_PROXY_CURRENT_RATIO,
     TF_IDX, BANANA_IDX, PROXY_IDX, VF_IDX,
     N_TF, N_BANANA, N_PROXY, N_VF, N_COILS
 )
@@ -90,14 +90,34 @@ def rebuild_biotsavart(
     if banana_dofs is None: banana_dofs = extract_banana_dofs(banana_coil.curve)
     if banana_qpts_per_order is None: banana_qpts_per_order = banana_coil.curve.quadpoints.size // banana_order
 
+    # If proxy current is passed in to rebuild, adjust VF coils to be unfixed with initial current 1/6.5*proxy_current
     if add_proxy_vf:
-        if proxy_current_ka is None: proxy_current_ka = 0.0
-        if proxy_rz is None:
-            proxy_rz = DEFAULT_PROXY_RZ
+        if vf_current_ka is None:
+            if proxy_current_ka is not None:
+                vf_current_ka = proxy_current_ka*VF_TO_PROXY_CURRENT_RATIO
+            else:
+                vf_current_ka = 0.0
+        if vf_fix_current is None:
+            if (proxy_current_ka is not None) and (proxy_current_ka != 0.0):
+                vf_fix_current = False
+            else:
+                vf_fix_current = True
 
-        if vf_current_ka is None: vf_current_ka = 0.0
-        if vf_fix_current is None: vf_fix_current = True
+        if proxy_current_ka is None: proxy_current_ka = 0.0
+        if proxy_rz is None: proxy_rz = DEFAULT_PROXY_RZ
     else:
+        vf_coil = coils[VF_IDX]
+        if vf_current_ka is None:
+            if proxy_current_ka is not None:
+                vf_current_ka = proxy_current_ka*VF_TO_PROXY_CURRENT_RATIO
+            else:
+                vf_current_ka = vf_coil.current.get_value()/1e3
+        if vf_fix_current is None:
+            if (proxy_current_ka is not None) and (proxy_current_ka != 0.0):
+                vf_fix_current = False
+            else:
+                vf_fix_current = (len(vf_coil.current.x) == 0)
+
         proxy_coil = coils[PROXY_IDX]
         if proxy_current_ka is None: proxy_current_ka = proxy_coil.current.get_value()/1e3
         if proxy_rz is None:
@@ -106,10 +126,6 @@ def rebuild_biotsavart(
             proxy_R = r.mean()
             proxy_Z = z.mean()
             proxy_rz = (proxy_R, proxy_Z)
-
-        vf_coil = coils[VF_IDX]
-        if vf_current_ka is None: vf_current_ka = vf_coil.current.get_value()/1e3
-        if vf_fix_current is None: vf_fix_current = (len(vf_coil.current.x) == 0)
 
     return build_biotsavart(
         tf_current_ka=tf_current_ka,

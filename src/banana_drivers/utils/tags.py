@@ -1,8 +1,8 @@
-import glob
 import os
 import random
 import re
 import string
+import warnings
 
 from collections import OrderedDict
 
@@ -52,6 +52,8 @@ OTHER_PATTERNS = OrderedDict(
     version_number_str=r"^vers(?P<version_number_str>\d+(?:_\d+)*)$",
     iter_number=r"^iter(?P<iter_number>\d+)$"
 )
+
+TOP_TAG_DICT_KEYS = ["biotsavart", "surface", "boozersurface", *list(OTHER_PATTERNS.keys())]
 
 CONVERTERS = OrderedDict(
     tag=str,
@@ -128,8 +130,7 @@ def _resolve_other_tags(tags: list[str]) -> dict:
                 matched = True
                 break
         if not matched: # only for diagnostic/debugging purposes
-            if "other" not in tag_dict: tag_dict["other"] = []
-            tag_dict["other"].append(_tag)
+            warnings.warn(f"Unexpected tag `{_tag}`, expected pattern for other tags: {OTHER_PATTERNS}")
     return tag_dict
 
 def check_tags(tag_dict: dict[str, int | str]) -> None:
@@ -140,6 +141,10 @@ def check_tags(tag_dict: dict[str, int | str]) -> None:
     for key in ["virtualcasing", "finitebuild"]:
         if ("biotsavart" in tag_dict) and (key in tag_dict["biotsavart"]):
             enforce_biotsavart_tags += [key]
+
+    for key in tag_dict:
+        if key not in TOP_TAG_DICT_KEYS:
+            warnings.warn(f"Unexpected top-level tag `{key}`, expected keys: {TOP_TAG_DICT_KEYS}")
 
     for enforce_tag_list, pattern_dict, label in [
         (enforce_biotsavart_tags, BIOTSAVART_PATTERNS, "biotsavart"),
@@ -159,12 +164,18 @@ def check_tags(tag_dict: dict[str, int | str]) -> None:
                 if label not in msg: msg[label] = ""
                 msg[label] += f"    Invalid tag format [{tag}]: {INVERTERS[tag](tag_dict[label][tag])}, expected pattern: {pattern}\n"
                 err = True
+        for key in tag_dict[label]:
+            if key not in pattern_dict:
+                warnings.warn(f"Unexpected tag `{key}` in `{label}` tags, expected tags: {list(pattern_dict.keys())}")
 
     verbose_err_msg = "\n".join([f"{label} tags:\n{_msg}" for label, _msg in msg.items()])
     assert (not err), f"Missing tags:\n{verbose_err_msg}"
 
 def resolve_biotsavart_json_filename(filename: str, enforce_tags: bool = True) -> dict:
-    biotsavart_tag, *other = os.path.basename(filename).removesuffix(".json").split(".")
+    filename = os.path.basename(filename).removesuffix(".json")
+    biotsavart_tag, *other = filename.split(".")
+    if "biotsavart" in other:
+        other = [tag for tag in other if tag != "biotsavart"]
 
     biotsavart_tag_dict = _resolve_tags(biotsavart_tag, "biotsavart")
     other_tags_dict = _resolve_other_tags(other)
@@ -176,7 +187,10 @@ def resolve_biotsavart_json_filename(filename: str, enforce_tags: bool = True) -
     return full_tag_dict
 
 def resolve_surface_json_filename(filename: str, enforce_tags: bool = True) -> dict:
-    surface_tag, *other = os.path.basename(filename).removesuffix(".json").split(".")
+    filename = os.path.basename(filename).removesuffix(".json")
+    surface_tag, *other = filename.split(".")
+    if "surface" in other:
+        other = [tag for tag in other if tag != "surface"]
 
     surface_tag_dict = _resolve_tags(surface_tag, "surface")
     other_tags_dict = _resolve_other_tags(other)
@@ -345,6 +359,20 @@ def generate_boozersurface_tags(
         raise ValueError(verbose_err_msg)
     
     return biotsavart_tag, surface_tag, boozersurface_tag, other_tags
+
+def generate_biotsavart_filename(tag_dict: dict[str, int | str], minimal: bool = True, enforce_tags: bool = True) -> str:
+    biotsavart_tag, other_tags = generate_biotsavart_tag(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
+    filename = biotsavart_tag + ".biotsavart"
+    if len(other_tags):
+        filename += "." + ".".join(other_tags)
+    return filename+".json"
+
+def generate_surface_filename(tag_dict: dict[str, int | str], minimal: bool = True, enforce_tags: bool = True) -> str:
+    surface_tag, other_tags = generate_surface_tag(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
+    filename = surface_tag + ".surface"
+    if len(other_tags):
+        filename += "." + ".".join(other_tags)
+    return filename+".json"
 
 def generate_boozersurface_filename(tag_dict: dict[str, int | str], minimal: bool = True, enforce_tags: bool = True) -> str:
     biotsavart_tag, surface_tag, boozersurface_tag, other_tags = generate_boozersurface_tags(tag_dict, minimal=minimal, enforce_tags=enforce_tags)
