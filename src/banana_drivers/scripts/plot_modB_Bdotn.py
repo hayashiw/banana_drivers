@@ -18,11 +18,7 @@ def build_parser():
     parser.add_argument("--dpi", type=int, default=150, help="DPI for the saved figure. Default: 150.")
     return parser
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
-    boozersurface_file = os.path.abspath(args.boozersurface_file)
-    tag_dict = resolve_boozersurface_json_filename(boozersurface_file)
-
+def make_plot(boozersurface_file, dpi=150):
     boozersurface = load(boozersurface_file)
     biotsavart = boozersurface.biotsavart
     surface = change_surface_range(boozersurface.surface)
@@ -35,11 +31,19 @@ def main(argv=None):
     else:
         print("Filament coils")
 
-    fig, axes = plt.subplots(
-        1, 3, figsize=(14, 4), dpi=args.dpi, layout="constrained", gridspec_kw=dict(width_ratios=(5, 5, 4)))
-    plot_modB(fig, axes[0], biotsavart, surface, finitebuild=finitebuild)
-    plot_Bdotn(fig, axes[1], biotsavart, surface, finitebuild=finitebuild)
-    plot_cross_sections(fig, axes[2], surface)
+    fig, axs = plt.subplots(
+        1, 3, figsize=(14, 4), dpi=dpi, layout="constrained", gridspec_kw=dict(width_ratios=(5, 5, 4)))
+    plot_modB(fig, axs[0], biotsavart, surface, finitebuild=finitebuild)
+    plot_Bdotn(fig, axs[1], biotsavart, surface, finitebuild=finitebuild)
+    plot_cross_sections(fig, axs[2], surface)
+    return fig, axs
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    boozersurface_file = os.path.abspath(args.boozersurface_file)
+    tag_dict = resolve_boozersurface_json_filename(boozersurface_file)
+
+    fig, axs = make_plot(boozersurface_file, dpi=args.dpi)
 
     biotsavart_tag, surface_tag, boozersurface_tag, other_tags = generate_boozersurface_tags(tag_dict, minimal=False)
     savefile = f"{biotsavart_tag}.{surface_tag}.{boozersurface_tag}"
