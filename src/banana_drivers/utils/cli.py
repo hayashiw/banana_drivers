@@ -168,6 +168,14 @@ def boozersurface_parameters_parser():
     p.add_argument("--volume-target-str", type=str, default=None, help="Volume target. If None, inherits from `boozersurface_file`. Input either a float or a percentage. Default: None.")
     return p
 
+def tags_parser():
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--biotsavart-tag", type=str, default=None, help="Set to change the BiotSavart tag in the output filename. Default: None.")
+    p.add_argument("--surface-tag", type=str, default=None, help="Set to change the Surface tag in the output filename. Default: None.")
+    p.add_argument("--extend-biotsavart-tag", type=str, default=None, help="Set to extend the existing BiotSavart tag in the output filename. Default: None.")
+    p.add_argument("--extend-surface-tag", type=str, default=None, help="Set to extend the existing Surface tag in the output filename. Default: None.")
+    return p
+
 def driver_parser(stage):
     assert stage in STAGES, f"Invalid stage: {stage}. Must be one of {STAGES}"
     is_stage2 = (stage == STAGE2)
@@ -191,6 +199,7 @@ def driver_parser(stage):
         shared_objectives_parser(),
         custom_objectives_parser(),
         objectives_parser(),
+        tags_parser(),
     ]
     if not is_stage2:
         parents.append(boozersurface_parameters_parser())
@@ -223,15 +232,15 @@ def load_yaml(yaml_file):
         return yaml.safe_load(f)
     
 def write_config_yaml(filename, args):
-    inputs, overrides, _ = process_driver_args(args)
-    save_args = dict(overrides)
+    inputs, config, _ = process_driver_args(args)
+    save_args = dict(config)
     save_args.update(inputs)
     with open(filename, "w") as f:
         yaml.dump(save_args, f)
 
 # config file contains parameters to pass in as CLI args with explicit CLI args taking priority
-# inputs is the actual CLI input options passed by the user
-# overrides are from the config file
+# inputs are the actual CLI input options passed by the user
+# config is from the config file
 # args are the collection that is actually passed to the driver
 def process_driver_args(args) -> dict:
     inputs = dict()
@@ -241,13 +250,13 @@ def process_driver_args(args) -> dict:
                 continue # skip empty lists since they may have defaults in the config file
             inputs[key] = val
     if "config_file" in inputs:
-        overrides = load_yaml(inputs["config_file"])
-        if "config_file" in overrides: # avoid nesting configs
-            del overrides["config_file"]
+        config = load_yaml(inputs["config_file"])
+        if "config_file" in config: # avoid nesting configs
+            del config["config_file"]
     else:
-        overrides = dict()
+        config = dict()
 
-    driver_args = dict(overrides)
-    driver_args.update(inputs) # CLI inputs take priority over config file
+    driver_args = dict(config)
+    driver_args.update(inputs) # CLI inputs override config file
     driver_args.update({key:val for key, val in DRIVER_DEFAULTS.items() if key not in driver_args})
-    return inputs, overrides, driver_args
+    return inputs, config, driver_args

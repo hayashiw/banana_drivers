@@ -22,7 +22,7 @@ from ..utils.tags import (
 
 def main(argv=None):
     args = driver_parser(STAGE).parse_args(argv)
-    inputs, overrides, driver_args = process_driver_args(args)
+    inputs, config, driver_args = process_driver_args(args)
     out_dir            = driver_args["out_dir"]
     save_iter_dir      = driver_args["save_iter_dir"]
     save_iter_freq     = driver_args["save_iter_freq"]
@@ -32,7 +32,7 @@ def main(argv=None):
     os.makedirs(out_dir, exist_ok=True)
 
     tag_dict, boozersurface = update_boozersurface_tags_from_args(driver_args)
-    tag_dict["biotsavart"]["stage"] = STAGE
+    tag_dict["biotsavart"]["stage"] = STAGE # Only BiotSavart is being optimized in stage 2, so only update the stage tag for BiotSavart and not for Surface
 
     version_number_str = generate_version_number(tag_dict, out_dir)
     tag_dict["version_number_str"] = version_number_str
@@ -49,15 +49,15 @@ def main(argv=None):
     log(f" --- {datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S %Z')} ---")
     log("Stage 2 optimization")
     log("")
-    if len(overrides):
-        log(f"Overrides from file → {inputs['config_file']}")
-        for key, val in overrides.items():
+    if len(config):
+        log(f"Config from file → {inputs['config_file']}")
+        for key, val in config.items():
             log(f"{key}: {val}")
         log("")
     log("CLI input parameters:")
     for key, val in inputs.items():
         line = f"{key}: {val}"
-        if key in overrides:
+        if key in config:
             line += f" (overridden)"
         log(line)
     log("")

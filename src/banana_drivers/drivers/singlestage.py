@@ -43,7 +43,7 @@ def make_solver_iter_tap(solver_iters):
 
 def main(argv=None):
     args = driver_parser(STAGE).parse_args(argv)
-    inputs, overrides, driver_args = process_driver_args(args)
+    inputs, config, driver_args = process_driver_args(args)
     iota               = driver_args["iota"]
     sign_g             = driver_args["sign_g"]
     out_dir            = driver_args["out_dir"]
@@ -72,15 +72,15 @@ def main(argv=None):
     log(f" --- {datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S %Z')} ---")
     log("Singlestage optimization")
     log("")
-    if len(overrides):
-        log(f"Overrides from file → {inputs['config_file']}")
-        for key, val in overrides.items():
+    if len(config):
+        log(f"Config from file → {inputs['config_file']}")
+        for key, val in config.items():
             log(f"{key}: {val}")
         log("")
     log("CLI input parameters:")
     for key, val in inputs.items():
         line = f"{key}: {val}"
-        if key in overrides:
+        if key in config:
             line += f" (overridden)"
         log(line)
     log("")

@@ -513,6 +513,17 @@ def update_boozersurface_tags_from_args(
     new_tag_dict["surface"]["tag"] = old_tag_dict["surface"]["tag"]
     new_tag_dict["surface"]["stage"] = old_tag_dict["surface"]["stage"]
     new_tag_dict["boozersurface"]["tag"] = old_tag_dict["boozersurface"]["tag"]
+
+    # If (extend_)?(biotsavart|surface)_tag is provided, update tag_dict accordingly.
+    for section in ["biotsavart", "surface"]:
+        if f"{section}_tag" in args:
+            new_tag_dict[section]["tag"] = args[f"{section}_tag"]
+        if f"extend_{section}_tag" in args:
+            extension = args[f"extend_{section}_tag"]
+            if not extension.startswith("_"):
+                extension = "_" + extension
+            new_tag_dict[section]["tag"] += extension
+
     return new_tag_dict, boozersurface
 
 def compare_tags(tag_dict1: dict[str, int | str], tag_dict2: dict[str, int | str]) -> bool:
