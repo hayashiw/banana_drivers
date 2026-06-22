@@ -1,7 +1,7 @@
 import numpy as np
 import plotly.graph_objects as go
 
-from banana_drivers.hardware import (
+from ..hardware import (
     hbt_banana_fb,
     hbt_banana_ws,
     hbt_shell,
@@ -15,6 +15,7 @@ from banana_drivers.hardware import (
     N_PROXY,
     N_VF,
 )
+from .surface import change_surface_range
 
 FONTSIZE = 12
 
@@ -35,6 +36,7 @@ def plot_banana_coil_projections(fig, ax, biotsavart, finitebuild=False):
         ax.plot(phi_proj, theta_plot, c="k", lw=lw)
 
 def plot_modB(fig, ax, biotsavart, surface, finitebuild=False):
+    surface = change_surface_range(surface, surf_range="field period")
     biotsavart.set_points(surface.gamma().reshape(-1, 3))
     B = biotsavart.B().reshape(surface.gamma().shape)
     modB = np.linalg.norm(B, axis=-1)
@@ -52,6 +54,7 @@ def plot_modB(fig, ax, biotsavart, surface, finitebuild=False):
     plot_banana_coil_projections(fig, ax, biotsavart, finitebuild=finitebuild)
 
 def plot_Bdotn(fig, ax, biotsavart, surface, finitebuild=False):
+    surface = change_surface_range(surface, surf_range="field period")
     biotsavart.set_points(surface.gamma().reshape(-1, 3))
     B = biotsavart.B().reshape(surface.gamma().shape)
     modB = np.linalg.norm(B, axis=-1)
@@ -71,6 +74,20 @@ def plot_Bdotn(fig, ax, biotsavart, surface, finitebuild=False):
     ax.set(xlim=(xmin, xmax), ylim=(ymin, ymax))
     plot_banana_coil_projections(fig, ax, biotsavart, finitebuild=finitebuild)
 
+def plot_vessel(fig, ax):
+    theta = np.linspace(0, 2*np.pi, 100)
+
+    for c, ls, lw, label in [
+        (hbt_vv, "-", 2, "Vacuum vessel"),
+        (hbt_banana_ws, "--", 1, "Winding surface"),
+        (hbt_shell, ":", 1, "Retractable shell"),
+    ]:
+        R = c.major_radius
+        a = c.minor_radius
+        x = R + a * np.cos(theta)
+        z = a * np.sin(theta)
+        ax.plot(x, z, c="k", ls=ls, lw=lw, label=label)
+
 def plot_cross_sections(fig, ax, surface, nphis=4):
     nfp = surface.nfp
     for iphi in range(nphis):
@@ -84,17 +101,7 @@ def plot_cross_sections(fig, ax, surface, nphis=4):
         z = cs[:, 2]
         ax.plot(r, z)
 
-    _theta = np.linspace(0, 2*np.pi, 100)
-    for c, ls, lw in [
-        (hbt_vv, "-", 2),
-        (hbt_banana_ws, "--", 1),
-        (hbt_shell, ":", 1),
-    ]:
-        R = c.major_radius
-        a = c.minor_radius
-        x = R + a * np.cos(_theta)
-        z = a * np.sin(_theta)
-        ax.plot(x, z, c="k", ls=ls, lw=lw)
+    plot_vessel(fig, ax)
 
     ax.set_xlabel("R [m]", fontsize=FONTSIZE)
     ax.set_ylabel("Z [m]", fontsize=FONTSIZE)

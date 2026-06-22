@@ -2,6 +2,9 @@ import argparse
 import os
 
 NUM_THREADS = 64
+TRGT_NPHI = 65
+TRGT_NTHETA = 64
+SRC_NPHI = int(1.5*TRGT_NPHI)
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Compute virtual casing data from a VMEC equilibrium.")
@@ -24,12 +27,9 @@ def main(argv=None):
     from simsopt.mhd import VirtualCasing
 
     vc_filename = vmec_file.replace("wout", "vcasing")
-    vc_src_nphi = 128
-    nphi = 128
-    ntheta = 127
 
     print(f"Making virtual casing")
-    vc = VirtualCasing.from_vmec(vmec_file, src_nphi=vc_src_nphi, trgt_nphi=nphi, trgt_ntheta=ntheta)
+    vc = VirtualCasing.from_vmec(vmec_file, src_nphi=SRC_NPHI, trgt_nphi=TRGT_NPHI, trgt_ntheta=TRGT_NTHETA)
     vc.save(vc_filename)
     print(f"Saved virtual casing to {vc_filename}")
 

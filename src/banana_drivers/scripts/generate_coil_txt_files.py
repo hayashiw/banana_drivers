@@ -8,8 +8,11 @@ from simsopt.geo import BoozerSurface
 
 from ..hardware import (
     hbt_banana_ws,
-    N_COILS
+    BANANA_IDX,
+    N_BANANA,
+    N_COILS,
 )
+from ..utils.biotsavart import rebuild_biotsavart
 
 HEADER = (
     "posx,posy,posz,"
@@ -22,6 +25,7 @@ def build_parser():
     parser = argparse.ArgumentParser(description="Generate coil txt files from a BoozerSurface JSON file or a BiotSavart JSON file.")
     parser.add_argument("input_file", help="Path to the input BoozerSurface or BiotSavart JSON file.")
     parser.add_argument("--out-dir", type=str, default=None, help="Path to output directory. Default is the cwd/{biotsavart_tag}.coils/")
+    parser.add_argument("--nqpts", type=int, default=None, help="Number of quadrature points for the coil curves. Default is determined by the input file.")
     return parser
 
 def compare_major_radius(curve, tol=1e-6):
@@ -60,6 +64,13 @@ def main(argv=None):
         biotsavart = obj
     else:
         raise ValueError(f"Unsupported input file type: {type(obj)}")
+
+    if args.nqpts is not None:
+        base_curve = biotsavart.coils[BANANA_IDX].curve
+        order = base_curve.order
+        qpts_per_order = args.nqpts // order
+        print(f"Rebuilding BiotSavart with {qpts_per_order} quadpoints per coil order: {qpts_per_order*order} total quadpoints")
+        biotsavart = rebuild_biotsavart(biotsavart, banana_qpts_per_order=qpts_per_order)
     
     out_dir = args.out_dir or os.path.join(os.getcwd(), input_file.replace(".json", ".coils"))
     os.makedirs(out_dir, exist_ok=True)
@@ -69,7 +80,8 @@ def main(argv=None):
     assert ncoils == N_COILS, f"Expected {N_COILS} coils, but found {ncoils}"
     
     print(f"Saving coils from {input_file} to {out_dir}")
-    for icoil in range(20, 30):
+    for icoil in range(BANANA_IDX, BANANA_IDX + N_BANANA):
+        banana_icoil = icoil - BANANA_IDX + 1
         curve = biotsavart.coils[icoil].curve
         Rmajor, _ = compare_major_radius(curve)
         
@@ -95,10 +107,10 @@ def main(argv=None):
             axis=1
         ):
             line += (",".join(map(str, row)) + "\n")
-        savefile = os.path.join(out_dir, f"coil{icoil-19}.csv")
+        savefile = os.path.join(out_dir, f"coil{banana_icoil}.csv")
         with open(savefile, "w") as f:
             f.write(line)
-        print(f"    Coil {icoil-19} saved to {savefile}")
+        print(f"    Coil {banana_icoil} saved to {savefile}")
 
     return 0
 

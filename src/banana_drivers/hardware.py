@@ -47,9 +47,9 @@ banana_current_max = max(0, DEFAULT_BANANA_CURRENT_KA)
 class HardwareLimits:
     tf_current_ka_limits: tuple[float, float] = (tf_current_min, tf_current_max) # kiloAmperes
     banana_current_ka_limits: tuple[float, float] = (banana_current_min, banana_current_max) # kiloAmperes
+    max_length: float    = 1.900 # meters
     banana_curv_p: int   = 4
     max_curvature: float = 100.0 # 1/meters
-    max_length: float    = 1.900 # meters
     # The original minimum coil-coil distance was 0.05 m or 5 cm.
     # This value was used up until May 26, 2026.
     min_ccdist: float    = 0.0462 # meters

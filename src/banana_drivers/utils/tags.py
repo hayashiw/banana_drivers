@@ -33,7 +33,8 @@ SURFACE_PATTERNS = OrderedDict(
     ntor=r"n(?P<ntor>\d+)$",
     nphi=r"np(?P<nphi>\d+)$",
     ntheta=r"nt(?P<ntheta>\d+)$",
-    stage=r"^(?P<stage>init|presolved|(stage2|singlestage)opt)$"
+    presolved=r"^(?P<presolved>presolved)$",
+    stage=r"^(?P<stage>init|(stage2|singlestage)opt)$",
 )
 
 ENFORCE_SURFACE_TAGS = ["tag", "mpol", "ntor", "stage"]
@@ -67,6 +68,7 @@ CONVERTERS = OrderedDict(
     ntor=int,
     nphi=int,
     ntheta=int,
+    presolved=str,
     constraint_weight_str=str,
     volume_target_str=str,
     version_number_str=str,
@@ -86,6 +88,7 @@ INVERTERS = dict(
     ntor=lambda x: f"n{x}",
     nphi=lambda x: f"np{x}",
     ntheta=lambda x: f"nt{x}",
+    presolved=lambda x: x,
     constraint_weight_str=lambda x: f"cw{x}",
     volume_target_str=lambda x: f"vol{x}",
     version_number_str=lambda x: f"vers{x}",
@@ -142,13 +145,18 @@ def check_tags(tag_dict: dict[str, int | str]) -> None:
         if ("biotsavart" in tag_dict) and (key in tag_dict["biotsavart"]):
             enforce_biotsavart_tags += [key]
 
+    enforce_surface_tags = ENFORCE_SURFACE_TAGS.copy()
+    for key in ["presolved"]:
+        if ("surface" in tag_dict) and (key in tag_dict["surface"]):
+            enforce_surface_tags += [key]
+
     for key in tag_dict:
         if key not in TOP_TAG_DICT_KEYS:
             warnings.warn(f"Unexpected top-level tag `{key}`, expected keys: {TOP_TAG_DICT_KEYS}")
 
     for enforce_tag_list, pattern_dict, label in [
         (enforce_biotsavart_tags, BIOTSAVART_PATTERNS, "biotsavart"),
-        (ENFORCE_SURFACE_TAGS, SURFACE_PATTERNS, "surface"),
+        (enforce_surface_tags, SURFACE_PATTERNS, "surface"),
         (ENFORCE_BOOZERSURFACE_TAGS, BOOZERSURFACE_PATTERNS, "boozersurface")
     ]:
         if label not in tag_dict: continue
@@ -283,9 +291,14 @@ def generate_surface_tag(
     if "surface" not in tag_dict: tag_dict = dict(surface=tag_dict)
     if enforce_tags: check_tags(tag_dict)
 
+    enforce_surface_tags = ENFORCE_SURFACE_TAGS.copy()
+    for key in ["presolved"]:
+        if key in tag_dict["surface"]:
+            enforce_surface_tags += [key]
+
     tags = []
     for key in SURFACE_PATTERNS:
-        if minimal and (key not in ENFORCE_SURFACE_TAGS): continue
+        if minimal and (key not in enforce_surface_tags): continue
         if key in tag_dict["surface"]:
             tags.append(INVERTERS[key](tag_dict["surface"][key]))
     surface_tag = "_".join(tags)
@@ -391,13 +404,16 @@ def generate_random_tag(n: int = 8, a_vs_d: float = 2/3) -> str:
     random.shuffle(characters)
     return "".join(characters)
 
-def load_tags_from_biotsavart(biotsavart: str | BiotSavart, biotsavart_tag: str = "biotsavart", stage: str = "init") -> dict[str, int | str]:
+def load_tags_from_biotsavart(biotsavart: str | BiotSavart, biotsavart_tag: str = "biotsavart", stage: str = "init", is_virtualcasing: bool | None = None) -> dict[str, int | str]:
     if isinstance(biotsavart, str):
         filename = biotsavart
         biotsavart = load(biotsavart)
         partial_tag_dict = resolve_biotsavart_json_filename(filename, enforce_tags=False)
         biotsavart_tag = partial_tag_dict["biotsavart"]["tag"]
         stage = partial_tag_dict["biotsavart"]["stage"]
+        is_virtualcasing = partial_tag_dict["biotsavart"].get("virtualcasing", False)
+    elif is_virtualcasing is None:
+        is_virtualcasing = False
     
     coils = biotsavart.coils
     ncoils = len(coils)
@@ -421,15 +437,19 @@ def load_tags_from_biotsavart(biotsavart: str | BiotSavart, biotsavart_tag: str 
         stage=stage,
     )
     if is_finitebuild: tag_dict["finitebuild"] = "finitebuild"
+    if is_virtualcasing: tag_dict["virtualcasing"] = "virtualcasing"
     return dict(biotsavart=tag_dict)
 
-def load_tags_from_surface(surface: str | Surface, surface_tag: str = "surface", stage: str = "init") -> dict[str, int | str]:
+def load_tags_from_surface(surface: str | Surface, surface_tag: str = "surface", stage: str = "init", is_presolved: bool | None = None) -> dict[str, int | str]:
     if isinstance(surface, str):
         filename = surface
         surface = load(surface)
         partial_tag_dict = resolve_surface_json_filename(filename, enforce_tags=False)
         surface_tag = partial_tag_dict["surface"]["tag"]
         stage = partial_tag_dict["surface"]["stage"]
+        is_presolved = ("presolved" in partial_tag_dict["surface"])
+    elif is_presolved is None:
+        is_presolved = False
 
     mpol = surface.mpol
     ntor = surface.ntor
@@ -444,6 +464,7 @@ def load_tags_from_surface(surface: str | Surface, surface_tag: str = "surface",
         ntheta=ntheta,
         stage=stage,
     )
+    if is_presolved: tag_dict["presolved"] = "presolved"
     return dict(surface=tag_dict)
 
 def load_tags_from_boozersurface(
@@ -452,17 +473,21 @@ def load_tags_from_boozersurface(
     biotsavart_tag: str = "biotsavart",
     surface_tag: str = "surface",
     biotsavart_stage: str = "init",
+    biotsavart_is_virtualcasing: bool | None = None,
     surface_stage: str = "init",
+    surface_is_presolved: bool | None = None,
 ) -> dict[str, int | str]:
     if isinstance(boozersurface, str):
-        filename = boozersurface
+        filename = os.path.basename(boozersurface)
         partial_tag_dict = resolve_boozersurface_json_filename(filename, enforce_tags=False)
         biotsavart_tag = partial_tag_dict["biotsavart"]["tag"]
         surface_tag = partial_tag_dict["surface"]["tag"]
         boozersurface_tag = partial_tag_dict["boozersurface"]["tag"]
         biotsavart_stage = partial_tag_dict["biotsavart"]["stage"]
+        biotsavart_is_virtualcasing = partial_tag_dict["biotsavart"].get("virtualcasing", None)
         surface_stage = partial_tag_dict["surface"]["stage"]
         volume_target_str = partial_tag_dict["boozersurface"]["volume_target_str"] # overrides input kwarg
+        surface_is_presolved = partial_tag_dict["surface"].get("presolved", None)
         boozersurface = load(boozersurface)
     else:
         boozersurface_tag = "boozersurface"
@@ -478,11 +503,11 @@ def load_tags_from_boozersurface(
 
     biotsavart = boozersurface.biotsavart
     biotsavart_tag_dict = load_tags_from_biotsavart(
-        biotsavart, biotsavart_tag=biotsavart_tag, stage=biotsavart_stage)
+        biotsavart, biotsavart_tag=biotsavart_tag, stage=biotsavart_stage, is_virtualcasing=biotsavart_is_virtualcasing)
 
     surface = boozersurface.surface
     surface_tag_dict = load_tags_from_surface(
-        surface, surface_tag=surface_tag, stage=surface_stage)
+        surface, surface_tag=surface_tag, stage=surface_stage, is_presolved=surface_is_presolved)
 
     tag_dict = dict(
         **boozersurface_tag_dict,
@@ -513,6 +538,13 @@ def update_boozersurface_tags_from_args(
     new_tag_dict["surface"]["tag"] = old_tag_dict["surface"]["tag"]
     new_tag_dict["surface"]["stage"] = old_tag_dict["surface"]["stage"]
     new_tag_dict["boozersurface"]["tag"] = old_tag_dict["boozersurface"]["tag"]
+
+    if "virtualcasing" in old_tag_dict["biotsavart"]:
+        new_tag_dict["biotsavart"]["virtualcasing"] = old_tag_dict["biotsavart"]["virtualcasing"]
+    if "finitebuild" in old_tag_dict["biotsavart"]:
+        new_tag_dict["biotsavart"]["finitebuild"] = old_tag_dict["biotsavart"]["finitebuild"]
+    if "presolved" in old_tag_dict["surface"]:
+        new_tag_dict["surface"]["presolved"] = old_tag_dict["surface"]["presolved"]
 
     # If (extend_)?(biotsavart|surface)_tag is provided, update tag_dict accordingly.
     for section in ["biotsavart", "surface"]:

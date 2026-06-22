@@ -66,7 +66,7 @@ def main(argv=None):
         volume_target_str=tag_dict["boozersurface"]["volume_target_str"],
     ))
     biotsavart_tag_dict = dict(biotsavart=tag_dict["biotsavart"])
-    tag_dict["surface"]["stage"] = "presolved"
+    tag_dict["surface"]["presolved"] = "presolved"
     surface_tag_dict = dict(surface=tag_dict["surface"])
 
     version_number_str = generate_version_number(tag_dict, out_dir=out_dir)
