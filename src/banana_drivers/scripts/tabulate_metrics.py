@@ -15,7 +15,7 @@ from simsopt.geo import (
     boozer_surface_residual,
 )
 
-from ..objectives.cwsobjectives import EllipseWidth
+from ..objectives.cwsobjectives import EllipseWidth, GlobalRadiusCurvature
 from ..objectives.defaults import *
 from ..utils.tags import resolve_boozersurface_json_filename
 from ..hardware import (
@@ -93,6 +93,7 @@ def extract_metrics(boozersurface_file: str):
     min_coil_coil_distance = CurveCurveDistance(banana_curves, 0).shortest_distance()
     max_poloidal_extent = find_poloidal_extent(banana_curve, R0) * 180 / np.pi
     max_ellipse_width = EllipseWidth(banana_curve).J()
+    min_global_curvature_radius = GlobalRadiusCurvature(banana_curve, 0.0).shortest_radius()
 
     metrics = {}
     metrics["biotsavart_tag"] = biotsavart_tag
@@ -110,6 +111,8 @@ def extract_metrics(boozersurface_file: str):
     metrics["max_poloidal_extent_constraint"] = max_poloidal_extent <= DEFAULT_MAX_POLOIDAL_EXTENT
     metrics["max_ellipse_width"] = max_ellipse_width
     metrics["max_ellipse_width_constraint"] = max_ellipse_width <= DEFAULT_MAX_ELLIPSE_WIDTH
+    metrics["min_global_curvature_radius"] = min_global_curvature_radius
+    metrics["min_global_curvature_radius_constraint"] = min_global_curvature_radius >= DEFAULT_MIN_GLOBAL_CURVATURE_RADIUS
     metrics["winding_surface_major_radius"] = R0
     metrics["winding_surface_minor_radius"] = a
 

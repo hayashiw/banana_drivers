@@ -128,7 +128,7 @@ def build_objective(boozersurface, stage, log, *, args=None):
 
     min_gcr = args.get("min_global_curvature_radius", DEFAULT_MIN_GLOBAL_CURVATURE_RADIUS)
     gcr_exp_weight = args.get("gcr_exp_weight", DEFAULT_GCR_EXP_WEIGHT)
-    J_gcr = GlobalRadiusCurvature(banana_curve, min_global_curvature_radius=min_gcr, exp_weight=gcr_exp_weight)
+    J_gcr = GlobalRadiusCurvature(banana_curve, minimum_radius=min_gcr, exp_weight=gcr_exp_weight)
     weight_gcr = args.get("weight_global_curvature_radius", DEFAULT_WEIGHT_GLOBAL_CURVATURE_RADIUS)
     if weight_gcr and min_gcr: JF_list.append(weight_gcr * J_gcr)
 
@@ -266,7 +266,7 @@ def build_objective(boozersurface, stage, log, *, args=None):
     if weight_width and min_width: objectives["J_ellipse_width_min"] = J_min_width.J
     objectives["ellipse_width"] = width.J
     if weight_gcr and min_gcr: objectives["J_global_curvature_radius"] = J_gcr.J
-    objectives["min_global_curvature_radius"] = J_gcr.min_global_curvature_radius
+    objectives["min_global_curvature_radius"] = J_gcr.shortest_radius
     if weight_curr and max_tf_current: objectives["J_tf_current_max"] = J_max_tf.J
     if weight_curr and min_tf_current: objectives["J_tf_current_min"] = J_min_tf.J
     if weight_curr and max_banana_current: objectives["J_banana_current_max"] = J_max_banana.J

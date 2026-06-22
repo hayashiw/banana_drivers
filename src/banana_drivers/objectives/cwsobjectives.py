@@ -200,7 +200,7 @@ class EllipseWidth(Optimizable):
 # Global radius of curvature objective ========================================
 @jit
 def _global_radius_curvature_pure(gamma, gammadash,
-                                     min_global_curvature_radius, exp_weight):
+                                     minimum_radius, exp_weight):
     r"""Gonzalez--Maddocks self-contact barrier in 3D Cartesian space."""
     dl = jnp.linalg.norm(gammadash, axis=-1)
     safe_dl = jnp.where(dl > 0.0, dl, 1.0)
@@ -218,7 +218,7 @@ def _global_radius_curvature_pure(gamma, gammadash,
     valid = (n_ratio > 0.0) & (dist > 0.0)
     S_C = jnp.where(valid, dist / safe_nr, jnp.full_like(dist, 1.0e12))
 
-    barrier = jnp.exp(-(S_C - min_global_curvature_radius) / exp_weight)
+    barrier = jnp.exp(-(S_C - minimum_radius) / exp_weight)
 
     N = gamma.shape[0]
     weights = dl[:, None] * dl[None, :]
@@ -256,7 +256,7 @@ class GlobalRadiusCurvature(Optimizable):
     required.
 
     Diagnostic methods :meth:`global_curvature_radii` and
-    :meth:`min_global_curvature_radius` expose the raw global radius of
+    :meth:`shortest_radius` expose the raw global radius of
     curvature for post-hoc inspection; the raw minimum is non-smooth and is
     not recommended as an optimisation target.
 
@@ -265,17 +265,17 @@ class GlobalRadiusCurvature(Optimizable):
     curve : simsopt.geo.curve.Curve
         Curve to penalise. Must expose ``gamma()``, ``gammadash()``,
         ``dgamma_by_dcoeff_vjp`` and ``dgammadash_by_dcoeff_vjp``.
-    min_global_curvature_radius : float, optional
-        Activation threshold :math:`R_{\min}` (meters). Default 0.05.
+    minimum_radius : float
+        Activation threshold :math:`R_{\min}` (meters).
     exp_weight : float, optional
         Barrier softness :math:`\varepsilon` (meters). Default 0.01.
     """
 
-    def __init__(self, curve, min_global_curvature_radius=0.05, exp_weight=0.01):
+    def __init__(self, curve, minimum_radius, exp_weight=0.01):
         self.curve = curve
         super().__init__(depends_on=[curve])
         self.J_jax = jit(lambda g, gd: _global_radius_curvature_pure(
-            g, gd, min_global_curvature_radius, exp_weight))
+            g, gd, minimum_radius, exp_weight))
         self.dJ_dgamma = jit(lambda g, gd: grad(self.J_jax, argnums=0)(g, gd))
         self.dJ_dgammadash = jit(
             lambda g, gd: grad(self.J_jax, argnums=1)(g, gd))
@@ -299,7 +299,7 @@ class GlobalRadiusCurvature(Optimizable):
         np.fill_diagonal(S_C, 1.0e12)
         return np.min(S_C, axis=1)
 
-    def min_global_curvature_radius(self):
+    def shortest_radius(self):
         return float(np.min(self.global_curvature_radii()))
 
     def J(self):
