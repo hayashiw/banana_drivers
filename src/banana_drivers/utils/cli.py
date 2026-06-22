@@ -140,10 +140,8 @@ def custom_objectives_parser():
                    help=f"Maximum ellipse width. Default: {DEFAULT_MAX_ELLIPSE_WIDTH} m.")
     p.add_argument("--min-ellipse-width", type=float, default=None,
                    help=f"Minimum ellipse width. Default: {DEFAULT_MIN_ELLIPSE_WIDTH} m.")
-    p.add_argument("--max-coil-self-distance", type=float, default=None,
-                   help=f"Maximum coil self-distance. Default: None.")
-    p.add_argument("--min-coil-self-distance", type=float, default=None,
-                   help=f"Minimum coil self-distance. Default: {DEFAULT_MIN_COIL_SELF_DISTANCE} m.")
+    p.add_argument("--min-global-curvature-radius", type=float, default=None,
+                   help=f"Minimum global curvature radius (Gonzalez-Maddocks). Default: {DEFAULT_MIN_GLOBAL_CURVATURE_RADIUS} m.")
     p.add_argument("--max-tf-current-ka", type=float, default=None,
                    help=f"Maximum TF coil current, kA. Default: {DEFAULT_TF_CURRENT_KA} kA.")
     p.add_argument("--min-tf-current-ka", type=float, default=None,
@@ -156,8 +154,8 @@ def custom_objectives_parser():
                    help=f"Weight for poloidal extent objective. Default: {DEFAULT_WEIGHT_POLOIDAL_EXTENT}.")
     p.add_argument("--weight-ellipse-width", type=float, default=None,
                    help=f"Weight for ellipse width objective. Default: {DEFAULT_WEIGHT_ELLIPSE_WIDTH}.")
-    p.add_argument("--weight-coil-self-distance", type=float, default=None,
-                   help=f"Weight for coil self-distance objective. Default: {DEFAULT_WEIGHT_COIL_SELF_DISTANCE}.")
+    p.add_argument("--weight-global-curvature-radius", type=float, default=None,
+                   help=f"Weight for global curvature radius objective. Default: {DEFAULT_WEIGHT_GLOBAL_CURVATURE_RADIUS}.")
     p.add_argument("--weight-currents", type=float, default=None,
                    help=f"Weight for TF and banana coil current objectives. Default: {DEFAULT_WEIGHT_CURRENTS}.")
     return p

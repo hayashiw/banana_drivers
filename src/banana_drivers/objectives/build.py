@@ -24,7 +24,7 @@ from ..hardware import (
     N_BANANA
 )
 from ..utils.stages import STAGES, STAGE2
-from .cwsobjectives import PoloidalExtent, ProjectedEllipseWidth, CurveSelfIntersect
+from .cwsobjectives import PoloidalExtent, EllipseWidth, GlobalRadiusCurvature
 from .currentobjectives import ScaledCurrentWrapper
 from .defaults import *
 
@@ -119,21 +119,18 @@ def build_objective(boozersurface, stage, log, *, args=None):
 
     max_width = args.get("max_ellipse_width", DEFAULT_MAX_ELLIPSE_WIDTH)
     min_width = args.get("min_ellipse_width", DEFAULT_MIN_ELLIPSE_WIDTH)
-    width = ProjectedEllipseWidth(banana_curve, hbt_banana_ws.major_radius, hbt_banana_ws.minor_radius)
+    width = EllipseWidth(banana_curve)
     J_max_width = QuadraticPenalty(width, max_width, "max")
     J_min_width = QuadraticPenalty(width, min_width, "min")
     weight_width = args.get("weight_ellipse_width", DEFAULT_WEIGHT_ELLIPSE_WIDTH)
     if weight_width and max_width: JF_list.append(weight_width * J_max_width)
     if weight_width and min_width: JF_list.append(weight_width * J_min_width)
 
-    max_self_dist = 0 # args.get("max_coil_self_distance", 0)
-    min_self_dist = args.get("min_coil_self_distance", DEFAULT_MIN_COIL_SELF_DISTANCE)
-    nskip = int(1.5 * banana_curve.order)
-    J_max_self = 0 # No maximum self-distance objective implemented
-    J_min_self = CurveSelfIntersect(banana_curve, min_self_dist, nskip)
-    weight_self = args.get("weight_coil_self_distance", DEFAULT_WEIGHT_COIL_SELF_DISTANCE)
-    if weight_self and max_self_dist: JF_list.append(weight_self * J_max_self) # Always skips
-    if weight_self and min_self_dist: JF_list.append(weight_self * J_min_self)
+    min_gcr = args.get("min_global_curvature_radius", DEFAULT_MIN_GLOBAL_CURVATURE_RADIUS)
+    gcr_exp_weight = args.get("gcr_exp_weight", DEFAULT_GCR_EXP_WEIGHT)
+    J_gcr = GlobalRadiusCurvature(banana_curve, min_global_curvature_radius=min_gcr, exp_weight=gcr_exp_weight)
+    weight_gcr = args.get("weight_global_curvature_radius", DEFAULT_WEIGHT_GLOBAL_CURVATURE_RADIUS)
+    if weight_gcr and min_gcr: JF_list.append(weight_gcr * J_gcr)
 
     max_tf_current     = abs(args.get("max_tf_current_ka", DEFAULT_TF_CURRENT_KA)*1e3)
     min_tf_current     = abs(args.get("min_tf_current_ka", 0)*1e3)
@@ -168,8 +165,7 @@ def build_objective(boozersurface, stage, log, *, args=None):
     if weight_pol   and min_pol: log(f"Poloidal extent (min): {min_pol * 180 / np.pi} degrees")
     if weight_width and max_width: log(f"Ellipse width (max): {max_width} m")
     if weight_width and min_width: log(f"Ellipse width (min): {min_width} m")
-    if weight_self  and max_self_dist: log(f"Coil self-distance (max): {max_self_dist} m")
-    if weight_self  and min_self_dist: log(f"Coil self-distance (min): {min_self_dist} m")
+    if weight_gcr   and min_gcr: log(f"Global curvature radius (min): {min_gcr} m")
     log("")
     log("Weights:")
     if weight_sqf and is_stage2: log(f"Squared flux: {weight_sqf}")
@@ -182,7 +178,7 @@ def build_objective(boozersurface, stage, log, *, args=None):
     if weight_curv and (max_curv or min_curv): log(f"Coil curvature: {weight_curv}")
     if weight_pol and (max_pol or min_pol): log(f"Poloidal extent: {weight_pol}")
     if weight_width and (max_width or min_width): log(f"Ellipse width: {weight_width}")
-    if weight_self and (max_self_dist or min_self_dist): log(f"Coil self-distance: {weight_self}")
+    if weight_gcr and min_gcr: log(f"Global curvature radius: {weight_gcr}")
     if weight_curr and (max_tf_current or min_tf_current or max_banana_current or min_banana_current): log(f"Currents: {weight_curr}")
 
     def get_Bdotn_norm():
@@ -269,9 +265,8 @@ def build_objective(boozersurface, stage, log, *, args=None):
     if weight_width and max_width: objectives["J_ellipse_width_max"] = J_max_width.J
     if weight_width and min_width: objectives["J_ellipse_width_min"] = J_min_width.J
     objectives["ellipse_width"] = width.J
-    # if weight_self and max_self_dist: objectives["J_self_distance_max"] = J_max_self.J
-    if weight_self and min_self_dist: objectives["J_self_distance_min"] = J_min_self.J
-    objectives["coil_self_distance"] = J_min_self.shortest_self_distance
+    if weight_gcr and min_gcr: objectives["J_global_curvature_radius"] = J_gcr.J
+    objectives["min_global_curvature_radius"] = J_gcr.min_global_curvature_radius
     if weight_curr and max_tf_current: objectives["J_tf_current_max"] = J_max_tf.J
     if weight_curr and min_tf_current: objectives["J_tf_current_min"] = J_min_tf.J
     if weight_curr and max_banana_current: objectives["J_banana_current_max"] = J_max_banana.J
