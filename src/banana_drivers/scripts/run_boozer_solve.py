@@ -69,9 +69,9 @@ def main(argv=None):
     tag_dict["surface"]["presolved"] = "presolved"
     surface_tag_dict = dict(surface=tag_dict["surface"])
 
-    version_number_str = generate_version_number(tag_dict, out_dir=out_dir)
-    if version_number_str != "0":
-        tag_dict["version_number_str"] = version_number_str
+    version_number = generate_version_number(tag_dict, out_dir=out_dir)
+    if version_number != 0:
+        tag_dict["version_number"] = version_number
 
     savefile = generate_boozersurface_filename(tag_dict)
     log_file = savefile.replace(".json", ".log")

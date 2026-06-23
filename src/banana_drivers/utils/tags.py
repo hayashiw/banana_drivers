@@ -47,10 +47,8 @@ BOOZERSURFACE_PATTERNS = OrderedDict(
 
 ENFORCE_BOOZERSURFACE_TAGS = ["tag", "constraint_weight_str", "volume_target_str"]
 
-# Version number can be vers0, vers1, etc.
-# In the case of branching versions (new run with vers1 even though vers2 already exists), can be vers1_1, vers1_2, etc.
 OTHER_PATTERNS = OrderedDict(
-    version_number_str=r"^vers(?P<version_number_str>\d+(?:_\d+)*)$",
+    version_number=r"^vers(?P<version_number>\d+)$",
     iter_number=r"^iter(?P<iter_number>\d+)$"
 )
 
@@ -71,7 +69,7 @@ CONVERTERS = OrderedDict(
     presolved=str,
     constraint_weight_str=str,
     volume_target_str=str,
-    version_number_str=str,
+    version_number=int,
     iter_number=int,
 )
 
@@ -91,7 +89,7 @@ INVERTERS = dict(
     presolved=lambda x: x,
     constraint_weight_str=lambda x: f"cw{x}",
     volume_target_str=lambda x: f"vol{x}",
-    version_number_str=lambda x: f"vers{x}",
+    version_number=lambda x: f"vers{x}",
     iter_number=lambda x: f"iter{x}"
 )
 
@@ -226,17 +224,17 @@ def resolve_boozersurface_json_filename(filename: str, enforce_tags: bool = True
     if enforce_tags: check_tags(full_tag_dict)
     return full_tag_dict
 
-def generate_version_number(tag_dict: dict[str, int | str], out_dir: str) -> str:
-    parent = tag_dict.get("version_number_str", None)
-    prefix = "" if (parent is None) else f"{parent}_"
-    i = 0
-    while True:
-        version_number_str = f"{prefix}{i}"
-        tag_dict["version_number_str"] = version_number_str
-        filename = os.path.join(out_dir, generate_boozersurface_filename(tag_dict))
-        if not os.path.exists(filename):
-            return version_number_str
-        i += 1
+def generate_version_number(tag_dict: dict[str, int | str], out_dir: str) -> int:
+    probe = dict(tag_dict)
+    probe["version_number"] = 0
+    suffix = ".vers0.json"
+    stem = generate_boozersurface_filename(probe).removesuffix(suffix)
+    pattern = re.compile(rf"^{re.escape(stem)}\.vers(\d+)\.json$")
+    if os.path.isdir(out_dir):
+        versions = [int(m.group(1)) for f in os.listdir(out_dir) if (m := pattern.match(f))]
+    else:
+        versions = []
+    return max(versions) + 1 if versions else 0
 
 def generate_biotsavart_tag(
     tag_dict: dict[str, int | str],
@@ -332,14 +330,14 @@ def generate_boozersurface_tags(
     err = False
     msg = ""
     if "biotsavart" in tag_dict:
-        # Ignore the BiotSavart version_number_str and iter_number tags
+        # Ignore the BiotSavart version_number and iter_number tags
         biotsavart_tag, _ = generate_biotsavart_tag(tag_dict["biotsavart"], minimal=minimal, enforce_tags=enforce_tags)
     else:
         err = True
         msg += "Missing `biotsavart` tags\n"
 
     if "surface" in tag_dict:
-        # Ignore the Surface version_number_str and iter_number tags
+        # Ignore the Surface version_number and iter_number tags
         surface_tag, _ = generate_surface_tag(tag_dict["surface"], minimal=minimal, enforce_tags=enforce_tags)
     else:
         err = True
@@ -522,7 +520,7 @@ def load_tags_from_boozersurface(
 
 def update_boozersurface_tags_from_args(
     args: dict,
-) -> dict[str, int | str]:
+) -> tuple[dict[str, int | str], BoozerSurface]:
     assert "boozersurface_file" in args, "Expected 'boozersurface_file' in args"
 
     boozersurface_file = args["boozersurface_file"]

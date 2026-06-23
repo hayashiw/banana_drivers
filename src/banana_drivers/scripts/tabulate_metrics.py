@@ -3,8 +3,14 @@ import json
 import numpy as np
 import os
 import pandas as pd
-import sys
 import warnings
+
+from scipy.optimize._lbfgsb_py import status_messages, task_messages
+messages = [
+    (smsg + ": " + tmsg).strip()
+    for smsg in status_messages.values()
+    for tmsg in task_messages.values()
+]
 
 from simsopt._core import load
 from simsopt.geo import (
@@ -48,10 +54,32 @@ def extract_metrics(boozersurface_file: str):
     basename = os.path.basename(file)
 
     statefile = os.path.join(dirname, basename.replace("boozersurface", "state"))
-    if not os.path.exists(statefile):
-        raise FileNotFoundError(f"State file not found: {statefile}")
-    with open(statefile, "r") as f:
-        state = json.load(f)
+    missing_state = not os.path.exists(statefile)
+    if missing_state:
+        warnings.warn(f"State file not found: {statefile}")
+    else:
+        with open(statefile, "r") as f:
+            state = json.load(f)
+
+    metrics = {}
+    smsg = "None"
+    tmsg = "None"
+    logfile = os.path.join(dirname, os.path.splitext(basename)[0] + ".log")
+    missing_log = not os.path.exists(logfile)
+    if missing_log:
+        warnings.warn(f"Log file not found: {logfile}")
+    else:
+        with open(logfile, "r") as f:
+            lines = list(reversed(f.readlines()))
+        for line in lines:
+            line = line.replace("#", "").strip()
+            if line in messages:
+                smsg, tmsg = line.split(":")
+                smsg = smsg.strip()
+                tmsg = tmsg.strip()
+                break
+    metrics["smsg"] = smsg
+    metrics["tmsg"] = tmsg
 
     tag_dict = resolve_boozersurface_json_filename(file)
     biotsavart_tag = tag_dict["biotsavart"]["tag"]
@@ -60,6 +88,8 @@ def extract_metrics(boozersurface_file: str):
     surface_tag = tag_dict["surface"]["tag"]
     is_presolved = "presolved" in tag_dict["surface"]
     surface_stage = tag_dict["surface"]["stage"]
+    version_number = tag_dict.get("version_number", 0)
+    metrics["version_number"] = version_number
 
     boozersurface = load(file)
     biotsavart = boozersurface.biotsavart
@@ -95,7 +125,6 @@ def extract_metrics(boozersurface_file: str):
     max_ellipse_width = EllipseWidth(banana_curve).J()
     min_global_curvature_radius = GlobalRadiusCurvature(banana_curve, 0.0).shortest_radius()
 
-    metrics = {}
     metrics["biotsavart_tag"] = biotsavart_tag
     metrics["biotsavart_stage"] = biotsavart_stage
     metrics["order"] = banana_curve.order
@@ -171,14 +200,20 @@ def extract_metrics(boozersurface_file: str):
     nonQS_ratio = np.sqrt(( (B_nonQS**2) * dS ).mean() / ( (B_QS**2) * dS ).mean())
     metrics["nonQS_ratio"] = nonQS_ratio
 
-    iota = state["iota"]
-    G = state["G"]
-    r, = boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=True, I=boozersurface.I)
-    r = np.linalg.norm(r.reshape(surface.gamma().shape), axis=-1)
-    metrics["max_Boozer_residual"] = r.max()
-    metrics["min_Boozer_residual"] = r.min()
-    metrics["avg_Boozer_residual"] = r.mean()
-    metrics["std_Boozer_residual"] = r.std()
+    if missing_state:
+        metrics["max_Boozer_residual"] = None
+        metrics["min_Boozer_residual"] = None
+        metrics["avg_Boozer_residual"] = None
+        metrics["std_Boozer_residual"] = None
+    else:
+        iota = state["iota"]
+        G = state["G"]
+        r = boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=True, I=boozersurface.I)[0]
+        r = np.linalg.norm(r.reshape(surface.gamma().shape), axis=-1)
+        metrics["max_Boozer_residual"] = r.max()
+        metrics["min_Boozer_residual"] = r.min()
+        metrics["avg_Boozer_residual"] = r.mean()
+        metrics["std_Boozer_residual"] = r.std()
 
     metrics["constraint_weight"] = boozersurface.constraint_weight
     label = boozersurface.label

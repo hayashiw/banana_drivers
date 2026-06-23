@@ -100,8 +100,8 @@ def main(argv=None):
             new_tag_dict["boozersurface"]["volume_target_str"] = kwarg_inputs["volume_target_str"].replace(".", "d").replace("%", "pct")
         else:
             new_tag_dict["boozersurface"]["volume_target_str"] = tag_dict["boozersurface"]["volume_target_str"]
-    if "version_number_str" in tag_dict:
-        new_tag_dict["version_number_str"] = tag_dict["version_number_str"]
+    if "version_number" in tag_dict:
+        new_tag_dict["version_number"] = tag_dict["version_number"]
     if "iter_number" in tag_dict:
         new_tag_dict["iter_number"] = tag_dict["iter_number"]
 

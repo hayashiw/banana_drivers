@@ -57,8 +57,8 @@ def main(argv=None):
     tag_dict["biotsavart"]["stage"] = STAGE
     tag_dict["surface"]["stage"] = STAGE
 
-    version_number_str = generate_version_number(tag_dict, out_dir)
-    tag_dict["version_number_str"] = version_number_str
+    version_number = generate_version_number(tag_dict, out_dir)
+    tag_dict["version_number"] = version_number
     if "iter_number" in tag_dict:
         del tag_dict["iter_number"]
     savefile = generate_boozersurface_filename(tag_dict)
