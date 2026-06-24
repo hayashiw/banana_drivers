@@ -40,7 +40,10 @@ def make_plot(boozersurface_file, dpi=150):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+
     boozersurface_file = os.path.abspath(args.boozersurface_file)
+    print(f"Making modB|Bdotn|cross sections figure for {boozersurface_file}")
+
     tag_dict = resolve_boozersurface_json_filename(boozersurface_file)
 
     fig, axs = make_plot(boozersurface_file, dpi=args.dpi)

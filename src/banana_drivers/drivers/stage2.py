@@ -34,6 +34,9 @@ def main(argv=None):
     tag_dict, boozersurface = update_boozersurface_tags_from_args(driver_args)
     tag_dict["biotsavart"]["stage"] = STAGE # Only BiotSavart is being optimized in stage 2, so only update the stage tag for BiotSavart and not for Surface
 
+    if "vcasing_file" in driver_args and driver_args["vcasing_file"] is not None:
+        tag_dict["biotsavart"]["virtualcasing"] = "virtualcasing"
+
     version_number = generate_version_number(tag_dict, out_dir)
     tag_dict["version_number"] = version_number
     if "iter_number" in tag_dict:

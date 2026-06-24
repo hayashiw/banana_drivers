@@ -109,6 +109,7 @@ def plot_poincare_trace(res_phi_hits, phis, dpi=150, surface=None):
 def trace_fieldlines(boozersurface, **kwargs):
     biotsavart = boozersurface.biotsavart
     surface = boozersurface.surface
+    biotsavart.set_points(surface.gamma().reshape(-1, 3))
 
     use_interp_field = kwargs.get("interpolate", False)
     sc_h = kwargs.get("sc_h", DEFAULT_SC_H)
@@ -169,6 +170,13 @@ def trace_fieldlines(boozersurface, **kwargs):
             nfp=surface.nfp,
             stellsym=surface.stellsym,
             skip=skip)
+        field.set_points(surface.gamma().reshape(-1, 3))
+        interp_diff = field.B() - biotsavart.B()
+        interp_diff_avg = interp_diff.mean()
+        interp_diff_std = interp_diff.std()
+        interp_diff_max = interp_diff.max()
+        print(f"Max interpolated field error: {interp_diff_max:.5e}")
+        print(f"Avg interpolated field error: {interp_diff_avg:.5e} ± {interp_diff_std:.5e}")
     else:
         field = biotsavart
 

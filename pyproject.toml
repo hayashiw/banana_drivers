@@ -19,6 +19,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 banana_drivers = ["inputs/*", "drivers/*.yaml", "scripts/*.sh"]
+simsopt_to_vmec = ["inputs/*"]
 
 [project.scripts]
 banana-change-parameters = "banana_drivers.scripts.change_parameters:main"
@@ -38,3 +39,6 @@ banana-singlestage-multithread = "banana_drivers.scripts.singlestage_multithread
 banana-singlestage = "banana_drivers.drivers.singlestage:main"
 banana-stage2 = "banana_drivers.drivers.stage2:main"
 banana-tabulate-metrics = "banana_drivers.scripts.tabulate_metrics:main"
+
+banana-simsvmec-extract-coefficients = "simsopt_to_vmec.scripts.extract_coefficients:main"
+banana-simsvmec-make-input = "simsopt_to_vmec.scripts.make_input:main"
