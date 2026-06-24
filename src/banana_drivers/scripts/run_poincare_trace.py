@@ -129,6 +129,7 @@ def trace_fieldlines(boozersurface, **kwargs):
     shell_zs = shell_gamma[..., 2]
     shell_rmin, shell_rmax = shell_rs.min(), shell_rs.max()
     shell_zmin, shell_zmax = shell_zs.min(), shell_zs.max()
+    if surface.stellsym: shell_zmin = 0.0
 
     rmin = (surf_rmin + shell_rmin) / 2
     rmax = (surf_rmax + shell_rmax) / 2
@@ -150,13 +151,13 @@ def trace_fieldlines(boozersurface, **kwargs):
             def skip(rs, phis, zs):
                 return [False for _ in rs]
 
-        nr = kwargs.get("nr", DEFAULT_NR)
+        nr   = kwargs.get("nr", DEFAULT_NR)
         nphi = kwargs.get("nphi", DEFAULT_NPHI)
-        nz = kwargs.get("nz", DEFAULT_NZ)
+        nz   = kwargs.get("nz", DEFAULT_NZ)
 
-        rrange = (shell_rmin, shell_rmax, nr)
+        rrange   = (shell_rmin, shell_rmax, nr)
         phirange = (0, 2*np.pi/surface.nfp, nphi)
-        zrange = (shell_zmin, shell_zmax, nz)
+        zrange   = (shell_zmin, shell_zmax, nz)
             
         field = InterpolatedField(
             biotsavart,
