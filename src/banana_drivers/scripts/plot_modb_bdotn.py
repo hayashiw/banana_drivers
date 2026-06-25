@@ -9,12 +9,12 @@ from simsopt._core import load
 
 from ..utils.plot import plot_modB, plot_Bdotn, plot_cross_sections
 from ..utils.surface import change_surface_range
-from ..utils.tags import resolve_boozersurface_json_filename, generate_boozersurface_tags
 from ..hardware import N_COILS, N_FB_COILS
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Plot |B|, B.n, and coil cross-sections for a BoozerSurface JSON file.")
     parser.add_argument("boozersurface_file", type=str, help="Path to the BoozerSurface JSON file.")
+    parser.add_argument("--out-dir", type=str, default=None, help="Out directory. Default is cwd.")
     parser.add_argument("--dpi", type=int, default=150, help="DPI for the saved figure. Default: 150.")
     return parser
 
@@ -44,15 +44,11 @@ def main(argv=None):
     boozersurface_file = os.path.abspath(args.boozersurface_file)
     print(f"Making modB|Bdotn|cross sections figure for {boozersurface_file}")
 
-    tag_dict = resolve_boozersurface_json_filename(boozersurface_file)
-
     fig, axs = make_plot(boozersurface_file, dpi=args.dpi)
 
-    biotsavart_tag, surface_tag, boozersurface_tag, other_tags = generate_boozersurface_tags(tag_dict, minimal=False)
-    savefile = f"{biotsavart_tag}.{surface_tag}.{boozersurface_tag}"
-    if len(other_tags):
-        savefile += "." + ".".join(other_tags)
-    savefile += ".modB_Bdotn.png"
+    out_dir = args.out_dir if args.out_dir is not None else os.getcwd()
+    os.makedirs(out_dir, exist_ok=True)
+    savefile = os.path.join(out_dir, os.path.basename(boozersurface_file).replace(".json", ".modB_Bdotn.png"))
     fig.savefig(savefile, dpi=args.dpi)
     print(f"Saved figure -> {savefile}")
     return 0

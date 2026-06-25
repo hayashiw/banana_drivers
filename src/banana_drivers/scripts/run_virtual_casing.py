@@ -2,7 +2,7 @@ import argparse
 import os
 
 NUM_THREADS = 64
-TRGT_NPHI = 65
+TRGT_NPHI = 85 # TRGT_NTHETA * R0 / a / nfp
 TRGT_NTHETA = 64
 SRC_NPHI = int(1.5*TRGT_NPHI)
 

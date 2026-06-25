@@ -114,7 +114,6 @@ def main(argv=None):
     if args.regular:
         constructor = BoozerSurface
         options["verbose"] = True
-        kwargs["options"] = options
     else:
         options["method"] = args.ls_method
         constructor = CustomBoozerSurface
@@ -130,8 +129,8 @@ def main(argv=None):
                 ub = np.array([ np.inf if hi is None else hi for lo, hi in bounds])
                 bounds = (lb, ub)
             options["bounds"] = bounds
-        kwargs["options"] = options
         kwargs["print_func"] = _print
+    kwargs["options"] = options
     customboozersurface = constructor(
         init_boozersurface.biotsavart,
         surface,

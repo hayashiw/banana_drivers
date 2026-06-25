@@ -24,6 +24,7 @@ simsopt_to_vmec = ["inputs/*"]
 [project.scripts]
 banana-change-parameters = "banana_drivers.scripts.change_parameters:main"
 banana-convert-tags = "banana_drivers.scripts.convert_tags:main"
+banana-find-iota-basin = "banana_drivers.scripts.find_iota_basin:main"
 banana-flip-surfacerzfourier = "banana_drivers.scripts.flip_surfacerzfourier:main"
 banana-generate-boozersurface-finitebuild = "banana_drivers.scripts.generate_boozersurface_finitebuild:main"
 banana-generate-coil-txt-files = "banana_drivers.scripts.generate_coil_txt_files:main"

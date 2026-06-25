@@ -37,6 +37,7 @@ from ..hardware import (
     N_VF,
     N_COILS,
 )
+from ..utils.metrics import calculate_qs_error
 from .print_parameters import find_poloidal_extent, find_winding_surface
 
 tf_current_ka_limits = hardware_limits.tf_current_ka_limits
@@ -62,8 +63,8 @@ def extract_metrics(boozersurface_file: str):
             state = json.load(f)
 
     metrics = {}
-    smsg = "None"
-    tmsg = "None"
+    smsg = None
+    tmsg = None
     logfile = os.path.join(dirname, os.path.splitext(basename)[0] + ".log")
     missing_log = not os.path.exists(logfile)
     if missing_log:
@@ -156,8 +157,8 @@ def extract_metrics(boozersurface_file: str):
     for icoil, coil in enumerate(banana_coils):
         current = coil.current
         current_ka = current.get_value() / 1e3
-        if not (min(banana_current_ka_limits) <= current_ka <= max(banana_current_ka_limits)):
-            warnings.warn(f"Banana coil {icoil} current ({current_ka} kA) is outside the limits [{min(banana_current_ka_limits)}, {max(banana_current_ka_limits)} kA]")
+        if not current_ka <= max([abs(val) for val in banana_current_ka_limits]):
+            warnings.warn(f"Banana coil {icoil} current ({current_ka} kA) exceeds the maximum absolute limit of {max([abs(val) for val in banana_current_ka_limits])} kA")
         metrics[f"banana_coil_current_{icoil}_kA"] = current_ka
         metrics[f"banana_coil_current_{icoil}_fixed"] = (len(current.x) == 0)
 
@@ -201,25 +202,36 @@ def extract_metrics(boozersurface_file: str):
     metrics["nonQS_ratio"] = nonQS_ratio
 
     if missing_state:
+        metrics["iota"] = None
+        metrics["G"]    = None
         metrics["max_Boozer_residual"] = None
         metrics["min_Boozer_residual"] = None
         metrics["avg_Boozer_residual"] = None
         metrics["std_Boozer_residual"] = None
+        metrics["QS_error"] = None
     else:
         iota = state["iota"]
         G = state["G"]
         r = boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=True, I=boozersurface.I)[0]
         r = np.linalg.norm(r.reshape(surface.gamma().shape), axis=-1)
+        metrics["iota"] = iota
+        metrics["G"]    = G
         metrics["max_Boozer_residual"] = r.max()
         metrics["min_Boozer_residual"] = r.min()
         metrics["avg_Boozer_residual"] = r.mean()
         metrics["std_Boozer_residual"] = r.std()
 
+        # Note that this is dependent on the Boozer residual being sufficiently small
+        # such that the surface quadpoints represent the Boozer angular coordinates.
+        metrics["QS_error"] = calculate_qs_error(boozersurface)
+
     metrics["constraint_weight"] = boozersurface.constraint_weight
     label = boozersurface.label
     if not isinstance(label, Volume):
-        raise TypeError(f"Expected boozersurface.label to be an instance of Volume, but got {type(label)}")
-    metrics["target_volume"] = boozersurface.targetlabel
+        warnings.warn(f"Expected boozersurface.label to be an instance of Volume, but got {type(label)}")
+        metrics["target_volume"] = None
+    else:
+        metrics["target_volume"] = boozersurface.targetlabel
 
     return metrics
 
@@ -268,15 +280,6 @@ def main(argv=None):
 
     metrics_df.to_csv(out_file)
     print(f"Metrics table csv saved to {out_file}")
-
-    formatted_df = pd.DataFrame({
-        col: [format_cell(val, dtypes[col]) for val in metrics_df[col]]
-        for col in columns
-    })
-    md_file = out_file.rsplit(".", 1)[0] + ".md"
-    with open(md_file, "w") as f:
-        f.write(formatted_df.to_markdown(index=False))
-    print(f"Metrics table markdown saved to {md_file}")
 
     return 0
 

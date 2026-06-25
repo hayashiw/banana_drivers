@@ -18,7 +18,7 @@ def build_parser():
     parser = argparse.ArgumentParser(description="Generate input file for VMEC from SIMSOPT BoozerSurface JSON file.")
     parser.add_argument("boozersurface_file", help="Path to the SIMSOPT BoozerSurface JSON file.")
     parser.add_argument("--ncurr", type=int, choices=[0, 1], default=DEFAULT_NCURR, help=f"Set to 0 for fixed iota, set to 1 for fixed current. Default: {DEFAULT_NCURR}.")
-    parser.add_argument("--curredge", type=float, default=DEFAULT_CURREDGE, help=f"Requires ncurr=1. Toroidal current at the edge. Coefficients are taken from {HBT_INPUT_FILE}. Default: {DEFAULT_CURREDGE}.")
+    parser.add_argument("--curredge", type=float, default=DEFAULT_CURREDGE, help=f"Requires ncurr=1. Toroidal current (A) at the edge. Coefficients are taken from {HBT_INPUT_FILE}. Default: {DEFAULT_CURREDGE}.")
     parser.add_argument("--iotaedge", type=float, default=DEFAULT_IOTAEDGE, help=f"Requires ncurr=0. Iota at the edge. Coefficients are taken from {HBT_INPUT_FILE}. Default: {DEFAULT_IOTAEDGE}.")
     parser.add_argument("--ns-array", type=int, nargs="+", default=DEFAULT_NS_ARRAY, help=f"List of ns values for VMEC. Default: {DEFAULT_NS_ARRAY}.")
     parser.add_argument("--niter-array", type=int, nargs="+", default=DEFAULT_NITER_ARRAY, help=f"List of niter values for VMEC. Default: {DEFAULT_NITER_ARRAY}.")

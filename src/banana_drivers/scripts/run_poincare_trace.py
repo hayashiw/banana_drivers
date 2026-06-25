@@ -35,7 +35,7 @@ DEFAULT_SC_P = 2
 DEFAULT_NLINES = 10
 DEFAULT_NPHIS = 4
 DEFAULT_TMAX = 7000
-DEFAULT_TOL = 1e-8
+DEFAULT_TOL = 1e-10
 DEFAULT_MAXITER = int(2e5)
 DEFAULT_MAXTOR = DEFAULT_TMAX//10
 
@@ -50,7 +50,7 @@ def build_parser():
     parser.add_argument("--no-plot", action="store_true", help="If set, do not save a plot of Poincare traces. Only applies if the input is a BoozerSurface JSON file. For .npz files, a plot is always saved. Default: False.")
     parser.add_argument("--nphis", type=int, default=DEFAULT_NPHIS, help=f"Number of toroidal slices for the Poincare trace and plot. Not to be confused with nphi. Default: {DEFAULT_NPHIS}.")
     parser.add_argument("--dpi", type=int, default=150, help="DPI for the saved figure. Default: 150.")
-    parser.add_argument("--interpolate", action="store_true", help="If set, use interpolated field for the Poincare trace instead of the raw field. Default: False.")
+    parser.add_argument("--no-interpolate", action="store_true", help="If set, do not use interpolated field for the Poincare trace and use the raw field instead. Default: False.")
     parser.add_argument("--skip", action="store_true", help="Requires interpolate=True. If set, uses skip in the InterpolatedField construction to skip points outside the vacuum vessel. Default: False.")
     parser.add_argument("--skip-tol", type=float, default=DEFAULT_SKIP_TOL, help=f"Tolerance for skipping points outside the vacuum vessel in the InterpolatedField construction. Default: {DEFAULT_SKIP_TOL}.")
     parser.add_argument("--sc-h", type=float, default=DEFAULT_SC_H, help=f"Parameter h for the SurfaceClassifier. Default: {DEFAULT_SC_H}.")
@@ -111,7 +111,7 @@ def trace_fieldlines(boozersurface, **kwargs):
     surface = boozersurface.surface
     biotsavart.set_points(surface.gamma().reshape(-1, 3))
 
-    use_interp_field = kwargs.get("interpolate", False)
+    use_raw_field = kwargs.get("no_interpolate", False)
     sc_h = kwargs.get("sc_h", DEFAULT_SC_H)
     sc_p = kwargs.get("sc_p", DEFAULT_SC_P)
 
@@ -135,7 +135,9 @@ def trace_fieldlines(boozersurface, **kwargs):
     rmin = (surf_rmin + shell_rmin) / 2
     rmax = (surf_rmax + shell_rmax) / 2
 
-    if use_interp_field:
+    if use_raw_field:
+        field = biotsavart
+    else:
         degree = kwargs.get("degree", DEFAULT_DEGREE)
         use_skip = kwargs.get("skip", False)
 
@@ -177,8 +179,6 @@ def trace_fieldlines(boozersurface, **kwargs):
         interp_diff_max = interp_diff.max()
         print(f"Max interpolated field error: {interp_diff_max:.5e}")
         print(f"Avg interpolated field error: {interp_diff_avg:.5e} ± {interp_diff_std:.5e}")
-    else:
-        field = biotsavart
 
     nlines  = kwargs.get("nlines", DEFAULT_NLINES)
     nphis   = kwargs.get("nphis", DEFAULT_NPHIS)
