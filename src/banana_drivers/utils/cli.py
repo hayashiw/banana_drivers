@@ -2,7 +2,7 @@ import argparse
 import yaml
 
 from ..objectives.defaults import *
-from ..hardware import hardware_limits, DEFAULT_TF_CURRENT_KA, DEFAULT_BANANA_CURRENT_KA
+from ..hardware import hardware_limits, hbt_banana_ws, DEFAULT_TF_CURRENT_KA, DEFAULT_BANANA_CURRENT_KA
 from .coils import DEFAULT_BANANA_ORDER, DEFAULT_QPTS_PER_ORDER
 from .surface import DEFAULT_MPOL, DEFAULT_NTOR, DEFAULT_NTHETA, DEFAULT_NPHI
 from .stages import STAGE2, STAGES
@@ -56,6 +56,10 @@ def banana_coil_parser():
                    help=f"Fourier order of the banana coil. If None, inherit from existing configuration or {DEFAULT_BANANA_ORDER}. Default: None.")
     p.add_argument("--banana-qpts-per-order", type=int, default=None,
                    help=f"Quadrature points per Fourier order. If None, inherit from existing configuration or {DEFAULT_QPTS_PER_ORDER}. Default: None.")
+    p.add_argument("--banana-ws-major-radius", type=float, default=None,
+                   help=f"Major radius of the banana winding surface. If None, inherit from existing configuration or {hbt_banana_ws.major_radius} m. Default: None.")
+    p.add_argument("--banana-ws-minor-radius", type=float, default=None,
+                   help=f"Minor radius of the banana winding surface. If None, inherit from existing configuration or {hbt_banana_ws.minor_radius} m. Default: None.")
     return p
 
 def proxy_coil_parser():

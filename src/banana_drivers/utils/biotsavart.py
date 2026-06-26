@@ -9,6 +9,7 @@ from .coils import (
     generate_proxy_coils,
     generate_vf_coils,
     extract_banana_dofs,
+    extract_winding_surface,
 )
 from ..hardware import (
     hbt_shell, hbt_banana_ws, VF_TO_PROXY_CURRENT_RATIO,
@@ -32,6 +33,8 @@ def build_biotsavart(
     banana_dofs: dict[str, float] | None = None,
     banana_order: int | None = None,
     banana_qpts_per_order: int | None = None,
+    banana_ws_major_radius: float | None = None,
+    banana_ws_minor_radius: float | None = None,
     vf_fix_current: bool = True,
 ) -> BiotSavart:
     tf_coils = generate_tf_coils(tf_current_ka, tf_fix_current)
@@ -40,6 +43,8 @@ def build_biotsavart(
     if banana_order is not None: banana_kwargs["order"] = banana_order
     if banana_dofs is not None: banana_kwargs["dofs"] = banana_dofs
     if banana_qpts_per_order is not None: banana_kwargs["qpts_per_order"] = banana_qpts_per_order
+    if banana_ws_major_radius is not None: banana_kwargs["major_radius"] = banana_ws_major_radius
+    if banana_ws_minor_radius is not None: banana_kwargs["minor_radius"] = banana_ws_minor_radius
     banana_coils = generate_banana_coils(banana_current_ka, **banana_kwargs)
 
     proxy_coils = generate_proxy_coils(proxy_current_ka, proxy_rz)
@@ -59,6 +64,8 @@ def rebuild_biotsavart(
     banana_dofs: dict[str, float] | None = None,
     banana_order: int | None = None,
     banana_qpts_per_order: int | None = None,
+    banana_ws_major_radius: float | None = None,
+    banana_ws_minor_radius: float | None = None,
     proxy_current_ka : float | None = None,
     proxy_rz : tuple[float, float] | None = None,
     vf_current_ka: float | None = None,
@@ -89,6 +96,11 @@ def rebuild_biotsavart(
     if banana_order is None: banana_order = banana_coil.curve.order
     if banana_dofs is None: banana_dofs = extract_banana_dofs(banana_coil.curve)
     if banana_qpts_per_order is None: banana_qpts_per_order = banana_coil.curve.quadpoints.size // banana_order
+
+    if banana_ws_major_radius is None or banana_ws_minor_radius is None:
+        major_radius, minor_radius = extract_winding_surface(banana_coil.curve)
+        if banana_ws_major_radius is None: banana_ws_major_radius = major_radius
+        if banana_ws_minor_radius is None: banana_ws_minor_radius = minor_radius
 
     # If proxy current is passed in to rebuild, adjust VF coils to be unfixed with initial current 1/6.5*proxy_current
     if add_proxy_vf:
@@ -138,6 +150,8 @@ def rebuild_biotsavart(
         banana_order=banana_order,
         banana_dofs=banana_dofs,
         banana_qpts_per_order=banana_qpts_per_order,
+        banana_ws_major_radius=banana_ws_major_radius,
+        banana_ws_minor_radius=banana_ws_minor_radius,
         vf_fix_current=vf_fix_current,
     )
 

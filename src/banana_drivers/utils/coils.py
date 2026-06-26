@@ -1,4 +1,4 @@
-from numpy import linspace, loadtxt, sign
+import numpy as np
 import yaml
 
 from simsopt.field import BiotSavart, Coil, Current, coils_via_symmetries
@@ -56,6 +56,22 @@ def extract_banana_dofs(curve: CurveCWSFourierCPP) -> dict[str, float]:
         dofs[dof_name] = curve.get(dof_name)
     return dofs
 
+def extract_winding_surface(curve: CurveCWSFourierCPP, ndigits=10, Z0=0.0) -> tuple[float, float]:
+    x, y, z = curve.gamma().T
+    r = np.sqrt(x**2 + y**2)
+
+    A = np.column_stack([r, np.ones_like(r)])
+    b = r**2 + (z - Z0)**2
+    c, *_ = np.linalg.lstsq(A, b, rcond=None)
+
+    major_radius = c[0] / 2.0
+    minor_radius = np.sqrt(c[1] + major_radius**2)
+
+    major_radius = round(major_radius, ndigits)
+    minor_radius = round(minor_radius, ndigits)
+    
+    return major_radius, minor_radius
+
 def generate_banana_coils(
     banana_current_ka: float,
     *,
@@ -63,17 +79,19 @@ def generate_banana_coils(
     order: int = DEFAULT_BANANA_ORDER,
     dofs: dict[str, float] | None = None,
     qpts_per_order: int = DEFAULT_QPTS_PER_ORDER,
+    major_radius: float = hbt_banana_ws.major_radius,
+    minor_radius: float = hbt_banana_ws.minor_radius,
 ) -> list[Coil]:
     winding_surface = SurfaceRZFourier(
         nfp=hbt_banana_ws.nfp, stellsym=hbt_banana_ws.stellsym
     )
-    winding_surface.set_rc(0, 0, hbt_banana_ws.major_radius)
-    winding_surface.set_rc(1, 0, hbt_banana_ws.minor_radius)
-    winding_surface.set_zs(1, 0, hbt_banana_ws.minor_radius)
+    winding_surface.set_rc(0, 0, major_radius)
+    winding_surface.set_rc(1, 0, minor_radius)
+    winding_surface.set_zs(1, 0, minor_radius)
 
     nqpts = qpts_per_order * order
     banana_curve = CurveCWSFourierCPP(
-        linspace(0, 1, nqpts, endpoint=False),
+        np.linspace(0, 1, nqpts, endpoint=False),
         order=order,
         surf=winding_surface
     )
@@ -89,7 +107,7 @@ def generate_banana_coils(
             min_order = max(min_order, n)
     if order < min_order:
         fit_curve = CurveCWSFourierCPP(
-            linspace(0, 1, nqpts, endpoint=False),
+            np.linspace(0, 1, nqpts, endpoint=False),
             order=min_order,
             surf=winding_surface
         )

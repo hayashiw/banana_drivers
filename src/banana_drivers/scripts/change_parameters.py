@@ -42,6 +42,7 @@ def build_parser():
     parser.add_argument("file", type=str, help="Path to the SIMSOPT JSON file.")
     parser.add_argument("--full-name", action="store_true", help="If set, will use `minimal=False` in the filename generation. Default: False (minimal=True)")
     parser.add_argument("--overwrite", action="store_true", help="If the intended save file exists, will raise an error if False. Set to True to overwrite existing files. Default: False")
+    parser.add_argument("--out-dir", type=str, default=".", help="Directory to save the updated SIMSOPT JSON file.")
     return parser
 
 SKIP_ARGS = ["file", "full_name", "overwrite"]
@@ -141,7 +142,7 @@ def main(argv=None):
             print(f"Changing tag parameters creates a new file with the same base tags.")
 
     minimal = not args.full_name
-    savefile = save_to_json(new_obj, new_tag_dict, minimal=minimal, overwrite=args.overwrite)
+    savefile = save_to_json(new_obj, new_tag_dict, minimal=minimal, overwrite=args.overwrite, out_dir=args.out_dir)
     print(f"Saved updated file to: {savefile}")
 
     return 0

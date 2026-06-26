@@ -1,5 +1,7 @@
 import argparse
 import numpy as np
+import os
+import json
 
 from scipy.optimize import minimize
 
@@ -21,6 +23,7 @@ def build_parser():
     parser.add_argument("--dof-g", action="store_true", help="If set, also treats G as a DOF and finds the TF current that minimizes the Boozer residual. Default: False.")
     parser.add_argument("--maxiter", type=int, default=DEFAULT_MAXITER, help=f"Maximum number of iterations for the minimization. Default: {DEFAULT_MAXITER}.")
     parser.add_argument("--tol", type=float, default=DEFAULT_TOL, help=f"Tolerance for the minimization. Default: {DEFAULT_TOL}.")
+    parser.add_argument("--overwrite", action="store_true", help="If set, allows overwriting existing state files. Default: False.")
     return parser
 
 def main(argv=None):
@@ -135,6 +138,20 @@ def main(argv=None):
         G = tracker['G']
         tf_current_ka = G / (MU0 * len(tf_coils)) / 1e3
         print(f"# Final TF current: {tf_current_ka:.3f} kA", flush=True)
+
+    statefile = os.path.join(os.path.dirname(boozersurface_file), os.path.basename(boozersurface_file).replace("boozersurface", "state"))
+    if os.path.exists(statefile):
+        if args.overwrite:
+            print(f"Overwriting state file {statefile}.", flush=True)
+        else:
+            print(f"State file {statefile} already exists. Use --overwrite to allow overwriting.", flush=True)
+            return 1
+    else:
+        print(f"Saving state file {statefile}.", flush=True)
+
+    with open(statefile, "w") as f:
+        json.dump(dict(iota=tracker["iota"], G=tracker["G"], targetlabel=boozersurface.targetlabel), f, indent=2)
+    print(f"State file {statefile} saved.", flush=True)
 
     return 0
 
