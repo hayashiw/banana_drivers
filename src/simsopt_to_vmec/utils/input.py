@@ -8,6 +8,8 @@ from simsopt.geo import BoozerSurface, SurfaceRZFourier
 
 from ..paths import HBT_COEFF_FILE
 
+from banana_drivers.utils.biotsavart import rebuild_biotsavart
+
 THIN_NTHETA = 256
 PCURR_TYPE = "power_series_i"
 PIOTA_TYPE = "power_series"
@@ -36,7 +38,9 @@ def write_fixedb_input_from_boozersurface(
     if isinstance(boozersurface, str):
         boozersurface = load(boozersurface)
 
-    biotsavart = boozersurface.biotsavart
+    biotsavart_in = boozersurface.biotsavart
+    biotsavart = rebuild_biotsavart(biotsavart_in, proxy_current_ka=0.0)
+
     surface_xyz = boozersurface.surface
     mpol = surface_xyz.mpol
     nfp = surface_xyz.nfp

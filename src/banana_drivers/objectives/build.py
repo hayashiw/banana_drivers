@@ -26,6 +26,7 @@ from ..hardware import (
 from ..utils.stages import STAGES, STAGE2
 from .cwsobjectives import PoloidalExtent, EllipseWidth, GlobalRadiusCurvature
 from .currentobjectives import ScaledCurrentWrapper
+from .target import interpolate_target_to_surface
 from .defaults import *
 
 __all__ = ["build_objective"]
@@ -51,6 +52,8 @@ def build_objective(boozersurface, stage, log, *, args=None):
         from simsopt.mhd import VirtualCasing
         vc = VirtualCasing.load(vcasing_file)
         target = vc.B_external_normal
+
+    target = interpolate_target_to_surface(surface, target)
     
     banana_curves = [c.curve for c in biotsavart.coils[BANANA_IDX:BANANA_IDX+N_BANANA]]
     banana_curve = banana_curves[0]

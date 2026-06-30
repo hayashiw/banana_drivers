@@ -45,7 +45,7 @@ def build_parser():
     parser.add_argument("--out-dir", type=str, default=".", help="Directory to save the updated SIMSOPT JSON file.")
     return parser
 
-SKIP_ARGS = ["file", "full_name", "overwrite"]
+SKIP_ARGS = ["file", "full_name", "overwrite", "out_dir"]
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
