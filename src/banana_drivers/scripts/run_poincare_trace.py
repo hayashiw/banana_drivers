@@ -141,18 +141,16 @@ def trace_fieldlines(boozersurface, **kwargs):
         degree = kwargs.get("degree", DEFAULT_DEGREE)
         use_skip = kwargs.get("skip", False)
 
-        if use_skip:
-            skip_tol = kwargs.get("skip_tol", DEFAULT_SKIP_TOL)
-            def skip(rs, phis, zs):
-                rphiz = np.asarray([rs, phis, zs]).T.copy()
-                dists = surfaceclassifier.evaluate_rphiz(rphiz)
-                skip = list((dists < skip_tol).flatten())
-                proc0_print("Skip", sum(skip), "cells out of", len(skip), flush=True)
-                return skip
-
-        else:
-            def skip(rs, phis, zs):
+        skip_tol = kwargs.get("skip_tol", DEFAULT_SKIP_TOL)
+        def skip(rs, phis, zs):
+            if not use_skip:
                 return [False for _ in rs]
+            
+            rphiz = np.asarray([rs, phis, zs]).T.copy()
+            dists = surfaceclassifier.evaluate_rphiz(rphiz)
+            skip = list((dists < skip_tol).flatten())
+            proc0_print("Skip", sum(skip), "cells out of", len(skip), flush=True)
+            return skip
 
         nr   = kwargs.get("nr", DEFAULT_NR)
         nphi = kwargs.get("nphi", DEFAULT_NPHI)

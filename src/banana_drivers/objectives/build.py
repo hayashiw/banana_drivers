@@ -45,15 +45,14 @@ def build_objective(boozersurface, stage, log, *, args=None):
 
     biotsavart = boozersurface.biotsavart
     surface = boozersurface.surface
-    target = None
+    vc = None
 
     vcasing_file = args.get("vcasing_file", None)
     if (vcasing_file is not None) and is_stage2:
         from simsopt.mhd import VirtualCasing
         vc = VirtualCasing.load(vcasing_file)
-        target = vc.B_external_normal
 
-    target = interpolate_target_to_surface(surface, target)
+    target = interpolate_target_to_surface(surface, vc)
     
     banana_curves = [c.curve for c in biotsavart.coils[BANANA_IDX:BANANA_IDX+N_BANANA]]
     banana_curve = banana_curves[0]

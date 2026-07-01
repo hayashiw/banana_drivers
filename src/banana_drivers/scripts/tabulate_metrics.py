@@ -190,10 +190,10 @@ def extract_metrics(boozersurface_file: str):
     B = biotsavart.B().reshape(surface.gamma().shape)
     modB = np.linalg.norm(B, axis=-1)
     Bdotn_norm = np.sum(B * surface.unitnormal(), axis=-1) / modB
-    metrics["max_Bdotn_norm"] = Bdotn_norm.max()
-    metrics["min_Bdotn_norm"] = Bdotn_norm.min()
-    metrics["avg_Bdotn_norm"] = Bdotn_norm.mean()
-    metrics["std_Bdotn_norm"] = Bdotn_norm.std()
+    metrics["max_Bdotn_norm"] = np.abs(Bdotn_norm).max()
+    metrics["min_Bdotn_norm"] = np.abs(Bdotn_norm).min()
+    metrics["avg_Bdotn_norm"] = np.abs(Bdotn_norm).mean()
+    metrics["std_Bdotn_norm"] = np.abs(Bdotn_norm).std()
 
     dS = np.linalg.norm(surface.normal(), axis=-1)
     B_QS = (modB * dS).mean(axis=0) / dS.mean(axis=0)
