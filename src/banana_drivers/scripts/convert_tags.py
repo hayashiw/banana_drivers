@@ -23,6 +23,7 @@ def build_parser():
     parser.add_argument("--new-random-tag", action="store_true", help="If set, will override --biotsavart-tag and --surface-tag and generate a new random tag.")
     parser.add_argument("--biotsavart-stage", type=str, default="init", choices=["init", "stage2opt", "singlestageopt"], help="BiotSavart stage tag. Choose from 'init', 'stage2opt', or 'singlestageopt'. Default: 'init'")
     parser.add_argument("--surface-stage", type=str, default="init", choices=["init", "presolved", "stage2opt", "singlestageopt"], help="Surface stage tag. Choose from 'init', 'presolved', 'stage2opt', or 'singlestageopt'. Default: 'init'")
+    parser.add_argument("--out-dir", type=str, default=".", help="Directory to save the converted SIMSOPT JSON file. Default: current directory.")
     return parser
 
 def main(argv=None):
@@ -49,13 +50,13 @@ def main(argv=None):
         tag_dict = load_tags_from_biotsavart(obj)
         tag_dict["biotsavart"]["tag"] = biotsavart_tag
         tag_dict["biotsavart"]["stage"] = args.biotsavart_stage
-        savefile = save_to_json(obj, tag_dict)
+        savefile = save_to_json(obj, tag_dict, out_dir=args.out_dir)
     elif isinstance(obj, Surface):
         print("Input file is a Surface object.")
         tag_dict = load_tags_from_surface(obj)
         tag_dict["surface"]["tag"] = surface_tag
         tag_dict["surface"]["stage"] = args.surface_stage
-        savefile = save_to_json(obj, tag_dict)
+        savefile = save_to_json(obj, tag_dict, out_dir=args.out_dir)
     elif isinstance(obj, BoozerSurface):
         print("Input file is a BoozerSurface object.")
         obj = rebuild_boozersurface(obj)
@@ -64,7 +65,7 @@ def main(argv=None):
         tag_dict["biotsavart"]["stage"] = args.biotsavart_stage
         tag_dict["surface"]["tag"] = surface_tag
         tag_dict["surface"]["stage"] = args.surface_stage
-        savefile = save_to_json(obj, tag_dict)
+        savefile = save_to_json(obj, tag_dict, out_dir=args.out_dir)
     else:
         raise ValueError(f"Unsupported object type: {type(obj)}")
     print(f"Saved converted file to: {savefile}")
