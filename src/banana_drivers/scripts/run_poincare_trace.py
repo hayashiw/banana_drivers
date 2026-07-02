@@ -175,8 +175,8 @@ def trace_fieldlines(boozersurface, **kwargs):
         interp_diff_avg = interp_diff.mean()
         interp_diff_std = interp_diff.std()
         interp_diff_max = interp_diff.max()
-        print(f"Max interpolated field error: {interp_diff_max:.5e}")
-        print(f"Avg interpolated field error: {interp_diff_avg:.5e} ± {interp_diff_std:.5e}")
+        proc0_print(f"Max interpolated field error: {interp_diff_max:.5e}")
+        proc0_print(f"Avg interpolated field error: {interp_diff_avg:.5e} ± {interp_diff_std:.5e}")
 
     nlines  = kwargs.get("nlines", DEFAULT_NLINES)
     nphis   = kwargs.get("nphis", DEFAULT_NPHIS)
