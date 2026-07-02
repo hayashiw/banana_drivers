@@ -5,7 +5,8 @@ import os
 
 from simsopt._core import load
 
-from ..hardware import N_TF, PROXY_IDX
+from ..hardware import PROXY_IDX, N_TF
+from ..utils.biotsavart import rebuild_biotsavart
 from ..utils.boozersurface import build_boozersurface
 from ..utils.tags import (
     resolve_biotsavart_json_filename,
@@ -92,6 +93,7 @@ def main(argv=None):
     if constraint_weight is None:
         surface = convert_to_boozerexact_surface(surface)
 
+    biotsavart = rebuild_biotsavart(biotsavart)
     proxy_coil = biotsavart.coils[PROXY_IDX]
     boozersurface = build_boozersurface(
         biotsavart,
