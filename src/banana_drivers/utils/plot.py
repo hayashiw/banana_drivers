@@ -1,5 +1,6 @@
 import numpy as np
 import plotly.graph_objects as go
+import warnings
 
 from ..hardware import (
     hbt_banana_fb,
@@ -14,6 +15,8 @@ from ..hardware import (
     N_BANANA,
     N_PROXY,
     N_VF,
+    N_COILS,
+    N_FB_COILS,
 )
 from .surface import change_surface_range
 
@@ -88,7 +91,7 @@ def plot_vessel(fig, ax):
         z = a * np.sin(theta)
         ax.plot(x, z, c="k", ls=ls, lw=lw, label=label)
 
-def plot_cross_sections(fig, ax, surface, nphis=4):
+def plot_cross_sections(fig, ax, surface, nphis=4, biotsavart=None):
     nfp = surface.nfp
     for iphi in range(nphis):
         phi = iphi / nphis / nfp
@@ -100,6 +103,28 @@ def plot_cross_sections(fig, ax, surface, nphis=4):
         r = np.linalg.norm(cs[:, :2], axis=-1)
         z = cs[:, 2]
         ax.plot(r, z)
+
+    if biotsavart is not None:
+        coils = biotsavart.coils
+        ncoils = len(coils)
+        if ncoils not in [N_COILS, N_FB_COILS]:
+            warnings.warn(f"Expected number of coils to be {N_COILS} (filament) or {N_FB_COILS} (finite build), but got {ncoils}. Skipping poloidal projection coil plot.")
+        else:
+            istart = BANANA_IDX
+            if ncoils == N_COILS:
+                nfil = 1
+                lw = 1.5
+            else:
+                nfil = hbt_banana_fb.numfilaments
+                lw = 1.5/2 # only 1/2 instead of 1/nfil since only two filaments are visible in the poloidal projection
+            iend = istart + N_BANANA * nfil
+            banana_coils = coils[istart:iend]
+            curves = [coil.curve for coil in banana_coils]
+            for curve in curves:
+                gamma = curve.gamma()
+                r = np.linalg.norm(gamma[:, :2], axis=-1)
+                z = gamma[:, 2]
+                ax.plot(r, z, c="r")
 
     plot_vessel(fig, ax)
 
