@@ -96,6 +96,12 @@ def main(argv=None):
         if key in tag_dict:
             new_tag_dict[key]["tag"] = tag_dict[key]["tag"]
             new_tag_dict[key]["stage"] = tag_dict[key]["stage"]
+    if "surface" in tag_dict and "presolved" in tag_dict["surface"]:
+        new_tag_dict["surface"]["presolved"] = tag_dict["surface"]["presolved"]
+    if "biotsavart" in tag_dict and "virtualcasing" in tag_dict["biotsavart"]:
+        new_tag_dict["biotsavart"]["virtualcasing"] = tag_dict["biotsavart"]["virtualcasing"]
+    if "biotsavart" in tag_dict and "finitebuild" in tag_dict["biotsavart"]:
+        new_tag_dict["biotsavart"]["finitebuild"] = tag_dict["biotsavart"]["finitebuild"]
     if "boozersurface" in tag_dict:
         if "volume_target_str" in kwarg_inputs:
             new_tag_dict["boozersurface"]["volume_target_str"] = kwarg_inputs["volume_target_str"].replace(".", "d").replace("%", "pct")
