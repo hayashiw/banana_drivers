@@ -17,10 +17,13 @@ messages = [
 ]
 
 from simsopt._core import load
+
+from simsopt.field import RegularizedCoil, regularization_circ
 from simsopt.geo import (
     CurveCurveDistance,
     CurveLength,
     CurveSurfaceDistance,
+    CurveXYZFourier,
     boozer_surface_residual,
 )
 from simsopt.mhd import VirtualCasing
@@ -60,6 +63,13 @@ def build_parser():
     parser.add_argument("--vmec-dir", type=str, default=None, help="Directory containing VMEC netCDF files that include wout, boozmn, and vcasing files. Files are assumed to have the format {wout,boozmn,vcasing}_<boozersurface_filename%.json>.vmec_curredge<current>kA.nc")
     parser.add_argument("--poincare-dir", type=str, default=None, help="Directory containing Poincare trace .npz files that have the format <boozersurface_filename%.json>.npz")
     return parser
+
+def refit_filament(filament, n_fourier=48):
+    xyz = filament.gamma()
+    qp = filament.curve.quadpoints
+    new = CurveXYZFourier(qp, n_fourier)
+    new.least_squares_fit(xyz)
+    return new
 
 def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
     file = os.path.abspath(boozersurface_file)
@@ -294,8 +304,7 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
                 print(f"Error processing virtualcasing file {vcasing_file}", flush=True)
 
     # Evaluate forces on finitebuild coil filaments at high resolution
-    # Requires finitebuild=True and regularized=True and banana_qpts_per_order = 512 // order
-    # Also zero out proxy current and VF current, max out TF current and banana current
+    # Requires finitebuild=True and banana_qpts_per_order = 512 // order
     nfil = hbt_banana_fb.numfilaments
     base_coils_highres_finitebuild_regularized = rebuild_biotsavart(
         biotsavart,
@@ -303,27 +312,26 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
         banana_current_ka=np.sign(banana_coils[0].current.get_value()) * np.abs(DEFAULT_BANANA_CURRENT_KA),
         banana_qpts_per_order=512//banana_curve.order,
         finitebuild=True,
-        regularized=True,
         proxy_current_ka=0.0,
         vf_current_ka=0.0,
     ).coils[:BANANA_IDX+N_BANANA*nfil]
-    # Identical but with zeroed out TF current to evaluate only banana coil forces on each other
     base_coils_highres_finitebuild_regularized_no_tf = base_coils_highres_finitebuild_regularized[BANANA_IDX:]
+    reg = regularization_circ(hbt_banana_fb.wire_radius)
     for ifil in range(BANANA_IDX, BANANA_IDX+nfil):
-        fil = base_coils_highres_finitebuild_regularized[ifil]
-        fil_no_tf = base_coils_highres_finitebuild_regularized_no_tf[ifil-BANANA_IDX]
+        base_fil = base_coils_highres_finitebuild_regularized[ifil]
+        refit = refit_filament(base_fil.curve)
+        fil = RegularizedCoil(refit, base_fil.current, reg)
         dF_dl_Npm_total  = fil.force(base_coils_highres_finitebuild_regularized)
         dF_dl_Npm_self   = fil.self_force()
         dF_dl_Npm_mutual = dF_dl_Npm_total - dF_dl_Npm_self
-        dF_dl_Npm_no_tf_total  = fil_no_tf.force(base_coils_highres_finitebuild_regularized_no_tf)
-        dF_dl_Npm_no_tf_self   = fil_no_tf.self_force()
-        dF_dl_Npm_no_tf_mutual = dF_dl_Npm_no_tf_total - dF_dl_Npm_no_tf_self
+        dF_dl_Npm_no_tf_total  = fil.force(base_coils_highres_finitebuild_regularized_no_tf)
+        dF_dl_Npm_no_tf_mutual = dF_dl_Npm_no_tf_total - dF_dl_Npm_self
         dT_dl_N = fil.torque(base_coils_highres_finitebuild_regularized)
-        dT_dl_N_no_tf = fil_no_tf.torque(base_coils_highres_finitebuild_regularized_no_tf)
+        dT_dl_N_no_tf = fil.torque(base_coils_highres_finitebuild_regularized_no_tf)
         net_F_N = fil.net_force(base_coils_highres_finitebuild_regularized)
-        net_F_N_no_tf = fil_no_tf.net_force(base_coils_highres_finitebuild_regularized_no_tf)
+        net_F_N_no_tf = fil.net_force(base_coils_highres_finitebuild_regularized_no_tf)
         net_T_Nm = fil.net_torque(base_coils_highres_finitebuild_regularized)
-        net_T_Nm_no_tf = fil_no_tf.net_torque(base_coils_highres_finitebuild_regularized_no_tf)
+        net_T_Nm_no_tf = fil.net_torque(base_coils_highres_finitebuild_regularized_no_tf)
 
         metrics[f"max_dF_dl_Npm_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_total, axis=-1).max()
         metrics[f"min_dF_dl_Npm_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_total, axis=-1).min()
@@ -341,10 +349,6 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
         metrics[f"min_dF_dl_Npm_no_tf_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_total, axis=-1).min()
         metrics[f"avg_dF_dl_Npm_no_tf_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_total, axis=-1).mean()
         metrics[f"std_dF_dl_Npm_no_tf_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_total, axis=-1).std()
-        metrics[f"max_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).max()
-        metrics[f"min_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).min()
-        metrics[f"avg_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).mean()
-        metrics[f"std_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).std()
         metrics[f"max_dF_dl_Npm_no_tf_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_mutual, axis=-1).max()
         metrics[f"min_dF_dl_Npm_no_tf_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_mutual, axis=-1).min()
         metrics[f"avg_dF_dl_Npm_no_tf_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_mutual, axis=-1).mean()
