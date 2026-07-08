@@ -24,6 +24,7 @@ from simsopt.util import comm_world, proc0_print
 
 from ..hardware import hbt_shell
 from ..utils.plot import plot_vessel
+from ..utils.io import read_poincare_npz
 
 DEFAULT_NR = 30
 DEFAULT_NPHI = 60
@@ -256,14 +257,13 @@ def main(argv=None):
             savefile = os.path.join(out_dir, base + ".npz")
             np.savez(savefile, res_tys_flat=res_tys_flat, res_phi_hits_flat=res_phi_hits_flat)
             proc0_print(f"Saved Poincare trace data to {savefile}")
+            file_to_read = savefile
         no_plot = args.no_plot
         surface = boozersurface.surface
     elif file_ext == ".npz":
         no_plot = False
         surface = None
-        if is_rank0:
-            data = np.load(file)
-            res_phi_hits_flat = data["res_phi_hits_flat"]
+        file_to_read = file
     else:
         parser.error(f"Unsupported file extension: {file_ext}")
 
@@ -271,16 +271,7 @@ def main(argv=None):
         return 0
     else:
         if is_rank0:
-            res_phi_hits_to_plot_dict = {}
-            for iline, *row in res_phi_hits_flat:
-                iline = int(iline)
-                if iline not in res_phi_hits_to_plot_dict:
-                    res_phi_hits_to_plot_dict[iline] = [row]
-                else:
-                    res_phi_hits_to_plot_dict[iline].append(row)
-            res_phi_hits_to_plot = []
-            for iline, rows in res_phi_hits_to_plot_dict.items():
-                res_phi_hits_to_plot.append(np.asarray(rows))
+            res_phi_hits_to_plot = read_poincare_npz(file_to_read)
             proc0_print(f"Plotting Poincare trace for {file}")
             fig, axs = plot_poincare_trace(res_phi_hits_to_plot, args.nphis, dpi=args.dpi, surface=surface)
             plotfile = os.path.join(out_dir, base + ".poincare.png")

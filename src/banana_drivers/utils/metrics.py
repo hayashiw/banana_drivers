@@ -37,4 +37,25 @@ def calculate_qs_error(boozersurface):
 
     return qs_error
 
-
+def calculate_trace_score(res_phi_hits):
+    tmax = max((float(h[-1, 0]) for h in map(np.asarray, res_phi_hits) if h.size), default=0.0)
+    if tmax == 0.0:
+        return 0.0, 0.0
+    exit_times, survived, evaluated = [], 0, 0
+    for fieldline in res_phi_hits:
+        fieldline = np.asarray(fieldline)
+        fieldline = fieldline[fieldline[:, 0] > 0]
+        if fieldline.size == 0:
+            continue  # skip: no post-launch data
+        evaluated += 1
+        stop_rows = np.flatnonzero(fieldline[:, 1] < 0)
+        if stop_rows.size == 0:
+            survived += 1
+            exit_times.append(tmax)
+        else:
+            exit_times.append(float(fieldline[stop_rows[0], 0]))
+    if evaluated == 0:
+        return 0.0, 0.0
+    survival_fraction = survived / evaluated
+    confinement_score = float(np.mean(exit_times) / tmax)
+    return survival_fraction, confinement_score

@@ -2,6 +2,7 @@ import atexit
 import contextlib
 import io
 import json
+import numpy as np
 import os
 import sys
 import traceback
@@ -172,4 +173,20 @@ def save_to_json(
             json.dump(dict(iota=iota, G=G, targetlabel=targetlabel), f, indent=2)
     
     return savefile
-    
+
+def read_poincare_npz(file):
+    poincare = np.load(file, allow_pickle=True)
+
+    res_phi_hits_flat = poincare["res_phi_hits_flat"]
+    res_phi_hits_to_plot_dict = {}
+    for iline, *row in res_phi_hits_flat:
+        iline = int(iline)
+        if iline not in res_phi_hits_to_plot_dict:
+            res_phi_hits_to_plot_dict[iline] = [row]
+        else:
+            res_phi_hits_to_plot_dict[iline].append(row)
+    res_phi_hits = []
+    for iline, rows in res_phi_hits_to_plot_dict.items():
+        res_phi_hits.append(np.asarray(rows))
+
+    return res_phi_hits

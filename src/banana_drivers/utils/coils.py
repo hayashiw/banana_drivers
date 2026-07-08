@@ -1,7 +1,15 @@
 import numpy as np
 import yaml
 
-from simsopt.field import BiotSavart, Coil, Current, coils_via_symmetries
+from simsopt.field import (
+    Coil,
+    Current,
+    RegularizedCoil,
+    apply_symmetries_to_currents,
+    apply_symmetries_to_curves,
+    coils_via_symmetries,
+    regularization_circ,
+)
 from simsopt.field.coil import ScaledCurrent
 from simsopt.geo import (
     CurveCWSFourierCPP,
@@ -10,9 +18,11 @@ from simsopt.geo import (
     create_equally_spaced_curves,
 )
 
+from .finitebuild import create_cws_multifilament_grid
 from ..paths import BANANA_DOFS_INIT_FILE
 from ..hardware import (
     hbt_tf,
+    hbt_banana_fb,
     hbt_banana_ws,
     hbt_vf,
 )
@@ -81,6 +91,8 @@ def generate_banana_coils(
     qpts_per_order: int = DEFAULT_QPTS_PER_ORDER,
     major_radius: float = hbt_banana_ws.major_radius,
     minor_radius: float = hbt_banana_ws.minor_radius,
+    finitebuild: bool | None = None,
+    regularized: bool | None = None,
 ) -> list[Coil]:
     winding_surface = SurfaceRZFourier(
         nfp=hbt_banana_ws.nfp, stellsym=hbt_banana_ws.stellsym
@@ -121,13 +133,45 @@ def generate_banana_coils(
     banana_current = ScaledCurrent(Current(1.0), banana_current_ka*1e3)
     if fix_current: banana_current.fix_all()
 
+    regularizations = [regularization_circ(hbt_banana_fb.wire_radius)] if regularized else None
     banana_coils = coils_via_symmetries(
         [banana_curve],
         [banana_current],
         hbt_banana_ws.nfp,
         hbt_banana_ws.stellsym,
+        regularizations=regularizations
     )
-    return banana_coils
+
+    if finitebuild:
+        nfil = hbt_banana_fb.numfilaments
+        base_coil = banana_coils[0]
+        base_curves = [base_coil.curve]
+        banana_current = base_coil.current.get_value()
+        total_current = ScaledCurrent(Current(1.0), banana_current)
+        base_currents = [total_current/nfil]
+
+        base_curves_finite_build = sum([
+            create_cws_multifilament_grid(
+                c, hbt_banana_ws.major_radius, hbt_banana_fb.numfilaments_n, hbt_banana_fb.numfilaments_b, 
+                hbt_banana_fb.offset_from_horizontal, hbt_banana_fb.offset_from_vertical, hbt_banana_fb.horizontal_spacing,
+                rotation_order=0)
+            for c in base_curves], [])
+        base_currents_finite_build = sum([[c]*nfil for c in base_currents], [])
+
+        curves_fb = apply_symmetries_to_curves(
+            base_curves_finite_build, hbt_banana_ws.nfp, hbt_banana_ws.stellsym)
+        currents_fb = apply_symmetries_to_currents(
+            base_currents_finite_build, hbt_banana_ws.nfp, hbt_banana_ws.stellsym)
+
+        if regularized:
+            reg = regularization_circ(hbt_banana_fb.wire_radius)
+            banana_coils_finitebuild = [RegularizedCoil(c, curr, reg) for (c, curr) in zip(curves_fb, currents_fb)]
+        else:
+            banana_coils_finitebuild = [Coil(c, curr) for c, curr in zip(curves_fb, currents_fb)]
+
+        return banana_coils_finitebuild
+    else:
+        return banana_coils
 
 def generate_proxy_coils(
     proxy_current_ka: float,

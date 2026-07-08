@@ -36,6 +36,7 @@ class BananaCoilFiniteBuild:
     numfilaments_n: int = 2
     numfilaments_b: int = 7
     numfilaments: int = numfilaments_n * numfilaments_b
+    wire_radius: float = 0.00409 # meters = 4.09 mm
 
 DEFAULT_TF_CURRENT_KA = -80.0 # kiloAmperes
 DEFAULT_BANANA_CURRENT_KA = 16.0 # kiloAmperes

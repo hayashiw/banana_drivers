@@ -1,7 +1,7 @@
 import inspect
 
 from simsopt._core import load
-from simsopt.field import BiotSavart, Coil
+from simsopt.field import BiotSavart
 from simsopt.geo import (
     BoozerSurface,
     SurfaceRZFourier,
@@ -9,7 +9,7 @@ from simsopt.geo import (
     Volume
 )
 
-from ..hardware import PROXY_IDX
+from ..hardware import hbt_banana_fb, N_TF, N_BANANA, PROXY_IDX
 from .biotsavart import rebuild_biotsavart
 from .constants import MU0
 from .surface import convert_rz_to_xyztensor, convert_to_boozerexact_surface, rebuild_surface
@@ -22,7 +22,8 @@ def build_boozersurface(
     constraint_weight: float | None = None,
     targetlabel: float | None = None,
     proxy_coil_from_surface: bool = True,
-    proxy_coil: Coil | None = None,
+    finitebuild: bool | None = None,
+    regularized: bool | None = None,
 ) -> BoozerSurface:
     if isinstance(biotsavart, str):
         biotsavart = load(biotsavart)
@@ -35,12 +36,14 @@ def build_boozersurface(
     else:
         surface = convert_rz_to_xyztensor(surface)
 
-    if proxy_coil is not None: proxy_coil_from_surface = False
     if proxy_coil_from_surface:
         proxy_rz = (surface.major_radius(), 0.0)
-        biotsavart = rebuild_biotsavart(biotsavart, proxy_rz=proxy_rz)
+    else:
+        proxy_rz = None
+    biotsavart = rebuild_biotsavart(biotsavart, proxy_rz=proxy_rz, finitebuild=finitebuild, regularized=regularized)
 
-    if proxy_coil is None: proxy_coil = biotsavart.coils[PROXY_IDX]
+    proxy_idx = N_TF + N_BANANA*hbt_banana_fb.numfilaments if finitebuild else PROXY_IDX
+    proxy_coil = biotsavart.coils[proxy_idx]
     current = proxy_coil.current.get_value()
     I = current * MU0
 
@@ -65,6 +68,8 @@ def rebuild_boozersurface(
     banana_qpts_per_order: int | None = None,
     banana_ws_major_radius: float | None = None,
     banana_ws_minor_radius: float | None = None,
+    finitebuild: bool | None = None,
+    regularized: bool | None = None,
     proxy_current_ka : float | None = None,
     proxy_rz : tuple[float, float] | None = None,
     vf_current_ka: float | None = None,
@@ -120,10 +125,13 @@ def rebuild_boozersurface(
         proxy_rz=new_proxy_rz,
         vf_current_ka=vf_current_ka,
         vf_fix_current=vf_fix_current,
+        finitebuild=finitebuild,
+        regularized=regularized,
     )
     new_biotsavart = rebuild_biotsavart(biotsavart, **biotsavart_kwargs)
 
-    proxy_coil = new_biotsavart.coils[PROXY_IDX]
+    proxy_idx = N_TF + N_BANANA*hbt_banana_fb.numfilaments if finitebuild else PROXY_IDX
+    proxy_coil = new_biotsavart.coils[proxy_idx]
     current = proxy_coil.current.get_value()
     I = current * MU0
 

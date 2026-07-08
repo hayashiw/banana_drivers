@@ -1,9 +1,13 @@
 import argparse
+import glob
 import json
 import numpy as np
 import os
 import pandas as pd
 import warnings
+import re
+
+from netCDF4 import Dataset
 
 from scipy.optimize._lbfgsb_py import status_messages, task_messages
 messages = [
@@ -17,16 +21,24 @@ from simsopt.geo import (
     CurveCurveDistance,
     CurveLength,
     CurveSurfaceDistance,
-    Volume,
     boozer_surface_residual,
 )
+from simsopt.mhd import VirtualCasing
 
+from .print_parameters import find_poloidal_extent, find_winding_surface
 from ..objectives.cwsobjectives import EllipseWidth, GlobalRadiusCurvature
+from ..objectives.target import interpolate_target_to_surface
 from ..objectives.defaults import *
 from ..utils.tags import resolve_boozersurface_json_filename
+from ..utils.biotsavart import rebuild_biotsavart
+from ..utils.metrics import calculate_qs_error, calculate_trace_score
+from ..utils.io import read_poincare_npz
 from ..hardware import (
+    hbt_banana_fb,
     hbt_banana_ws,
     hardware_limits,
+    DEFAULT_TF_CURRENT_KA,
+    DEFAULT_BANANA_CURRENT_KA,
     TF_IDX,
     BANANA_IDX,
     PROXY_IDX,
@@ -37,8 +49,6 @@ from ..hardware import (
     N_VF,
     N_COILS,
 )
-from ..utils.metrics import calculate_qs_error
-from .print_parameters import find_poloidal_extent, find_winding_surface
 
 tf_current_ka_limits = hardware_limits.tf_current_ka_limits
 banana_current_ka_limits = hardware_limits.banana_current_ka_limits
@@ -47,9 +57,11 @@ def build_parser():
     parser = argparse.ArgumentParser(description="Generate table of metrics from Boozer surface JSON files.")
     parser.add_argument("files", nargs="+", help="Boozer surface JSON files to process.")
     parser.add_argument("--out-file", type=str, default="metrics_table.csv", help="Output CSV file for the metrics table. Default: metrics_table.csv")
+    parser.add_argument("--vmec-dir", type=str, default=None, help="Directory containing VMEC netCDF files that include wout, boozmn, and vcasing files. Files are assumed to have the format {wout,boozmn,vcasing}_<boozersurface_filename%.json>.vmec_curredge<current>kA.nc")
+    parser.add_argument("--poincare-dir", type=str, default=None, help="Directory containing Poincare trace .npz files that have the format <boozersurface_filename%.json>.npz")
     return parser
 
-def extract_metrics(boozersurface_file: str):
+def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
     file = os.path.abspath(boozersurface_file)
     dirname = os.path.dirname(file)
     basename = os.path.basename(file)
@@ -227,11 +239,128 @@ def extract_metrics(boozersurface_file: str):
 
     metrics["constraint_weight"] = boozersurface.constraint_weight
     label = boozersurface.label
-    if not isinstance(label, Volume):
-        warnings.warn(f"Expected boozersurface.label to be an instance of Volume, but got {type(label)}")
-        metrics["target_volume"] = None
-    else:
-        metrics["target_volume"] = boozersurface.targetlabel
+    label_name = ""
+    if hasattr(label, "__class__") and hasattr(label.__class__, "__name__"):
+        label_name = "_" + label.__class__.__name__.lower()
+    metrics[f"target{label_name}"] = boozersurface.targetlabel
+
+    if poincare_dir is not None:
+        try:
+            poincare_file = os.path.join(poincare_dir, basename.replace(".json", ".npz"))
+            res_phi_hits = read_poincare_npz(poincare_file)
+            survival_fraction, confinement_score = calculate_trace_score(res_phi_hits)
+        except Exception as e:
+            print(f"Error processing Poincare file {poincare_file}: {e}", flush=True)
+            survival_fraction = None
+            confinement_score = None
+        metrics["survival_fraction"] = survival_fraction
+        metrics["confinement_score"] = confinement_score
+
+    if vmec_dir is not None:
+        boozmn_files = glob.glob(os.path.join(vmec_dir, f"boozmn_{basename.replace('.json', '*.nc')}"))
+        for boozmn_file in boozmn_files:
+            try:
+                search = re.search(r'vmec_(?P<curredge_str>curredge(\d+d\d+))', boozmn_file)
+                if search:
+                    curredge_str = search.group("curredge_str")
+                    key = f"xbooz_edge_qs_error_{curredge_str}"
+                    with Dataset(boozmn_file, "r") as nc:
+                        bmnc = nc.variables["bmnc_b"][:][-1] # last surface should be boundary surface
+                        xn = nc.variables["ixn_b"][:]
+                    metrics[key] = np.sum(bmnc[xn != 0]**2) / np.sum(bmnc**2)
+            except Exception as e:
+                print(f"Error processing BOOZ_XFORM file {boozmn_file}: {e}", flush=True)
+
+        vcasing_files = glob.glob(os.path.join(vmec_dir, f"vcasing_{basename.replace('.json', '*.nc')}"))
+        for vcasing_file in vcasing_files:
+            try:
+                search = re.search(r'vmec_(?P<curredge_str>curredge(\d+d\d+))', vcasing_file)
+                if search:
+                    curredge_str = search.group("curredge_str")
+                    key_max = f"virtualcasing_max_Bdotn_norm_{curredge_str}"
+                    key_min = f"virtualcasing_min_Bdotn_norm_{curredge_str}"
+                    key_avg = f"virtualcasing_avg_Bdotn_norm_{curredge_str}"
+                    key_err = f"virtualcasing_std_Bdotn_norm_{curredge_str}"
+
+                    vc = VirtualCasing.load(vcasing_file)
+                    target = interpolate_target_to_surface(surface, vc)
+
+                    vc_Bdotn_norm = (np.sum(B*surface.unitnormal(), axis=-1) - target) / modB
+                    metrics[key_max] = np.abs(vc_Bdotn_norm).max()
+                    metrics[key_min] = np.abs(vc_Bdotn_norm).min()
+                    metrics[key_avg] = np.abs(vc_Bdotn_norm).mean()
+                    metrics[key_err] = np.abs(vc_Bdotn_norm).std()
+            except:
+                print(f"Error processing virtualcasing file {vcasing_file}", flush=True)
+
+    # Evaluate forces on finitebuild coil filaments at high resolution
+    # Requires finitebuild=True and regularized=True and banana_qpts_per_order = 512 // order
+    # Also zero out proxy current and VF current, max out TF current and banana current
+    nfil = hbt_banana_fb.numfilaments
+    base_coils_highres_finitebuild_regularized = rebuild_biotsavart(
+        biotsavart,
+        tf_current_ka=np.sign(tf_coils[0].current.get_value()) * np.abs(DEFAULT_TF_CURRENT_KA),
+        banana_current_ka=np.sign(banana_coils[0].current.get_value()) * np.abs(DEFAULT_BANANA_CURRENT_KA),
+        banana_qpts_per_order=512//banana_curve.order,
+        finitebuild=True,
+        regularized=True,
+        proxy_current_ka=0.0,
+        vf_current_ka=0.0,
+    ).coils[:BANANA_IDX+N_BANANA*nfil]
+    # Identical but with zeroed out TF current to evaluate only banana coil forces on each other
+    base_coils_highres_finitebuild_regularized_no_tf = base_coils_highres_finitebuild_regularized[BANANA_IDX:]
+    for ifil in range(BANANA_IDX, BANANA_IDX+nfil):
+        fil = base_coils_highres_finitebuild_regularized[ifil]
+        fil_no_tf = base_coils_highres_finitebuild_regularized_no_tf[ifil-BANANA_IDX]
+        dF_dl_Npm_total  = fil.force(base_coils_highres_finitebuild_regularized)
+        dF_dl_Npm_self   = fil.self_force()
+        dF_dl_Npm_mutual = dF_dl_Npm_total - dF_dl_Npm_self
+        dF_dl_Npm_no_tf_total  = fil_no_tf.force(base_coils_highres_finitebuild_regularized_no_tf)
+        dF_dl_Npm_no_tf_self   = fil_no_tf.self_force()
+        dF_dl_Npm_no_tf_mutual = dF_dl_Npm_no_tf_total - dF_dl_Npm_no_tf_self
+        dT_dl_N = fil.torque(base_coils_highres_finitebuild_regularized)
+        dT_dl_N_no_tf = fil_no_tf.torque(base_coils_highres_finitebuild_regularized_no_tf)
+        net_F_N = fil.net_force(base_coils_highres_finitebuild_regularized)
+        net_F_N_no_tf = fil_no_tf.net_force(base_coils_highres_finitebuild_regularized_no_tf)
+        net_T_Nm = fil.net_torque(base_coils_highres_finitebuild_regularized)
+        net_T_Nm_no_tf = fil_no_tf.net_torque(base_coils_highres_finitebuild_regularized_no_tf)
+
+        metrics[f"max_dF_dl_Npm_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_total, axis=-1).max()
+        metrics[f"min_dF_dl_Npm_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_total, axis=-1).min()
+        metrics[f"avg_dF_dl_Npm_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_total, axis=-1).mean()
+        metrics[f"std_dF_dl_Npm_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_total, axis=-1).std()
+        metrics[f"max_dF_dl_Npm_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_self, axis=-1).max()
+        metrics[f"min_dF_dl_Npm_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_self, axis=-1).min()
+        metrics[f"avg_dF_dl_Npm_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_self, axis=-1).mean()
+        metrics[f"std_dF_dl_Npm_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_self, axis=-1).std()
+        metrics[f"max_dF_dl_Npm_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_mutual, axis=-1).max()
+        metrics[f"min_dF_dl_Npm_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_mutual, axis=-1).min()
+        metrics[f"avg_dF_dl_Npm_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_mutual, axis=-1).mean()
+        metrics[f"std_dF_dl_Npm_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_mutual, axis=-1).std()
+        metrics[f"max_dF_dl_Npm_no_tf_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_total, axis=-1).max()
+        metrics[f"min_dF_dl_Npm_no_tf_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_total, axis=-1).min()
+        metrics[f"avg_dF_dl_Npm_no_tf_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_total, axis=-1).mean()
+        metrics[f"std_dF_dl_Npm_no_tf_total_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_total, axis=-1).std()
+        metrics[f"max_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).max()
+        metrics[f"min_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).min()
+        metrics[f"avg_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).mean()
+        metrics[f"std_dF_dl_Npm_no_tf_self_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_self, axis=-1).std()
+        metrics[f"max_dF_dl_Npm_no_tf_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_mutual, axis=-1).max()
+        metrics[f"min_dF_dl_Npm_no_tf_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_mutual, axis=-1).min()
+        metrics[f"avg_dF_dl_Npm_no_tf_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_mutual, axis=-1).mean()
+        metrics[f"std_dF_dl_Npm_no_tf_mutual_fil{ifil}"] = np.linalg.norm(dF_dl_Npm_no_tf_mutual, axis=-1).std()
+        metrics[f"max_dT_dl_N_fil{ifil}"] = np.linalg.norm(dT_dl_N, axis=-1).max()
+        metrics[f"min_dT_dl_N_fil{ifil}"] = np.linalg.norm(dT_dl_N, axis=-1).min()
+        metrics[f"avg_dT_dl_N_fil{ifil}"] = np.linalg.norm(dT_dl_N, axis=-1).mean()
+        metrics[f"std_dT_dl_N_fil{ifil}"] = np.linalg.norm(dT_dl_N, axis=-1).std()
+        metrics[f"max_dT_dl_N_no_tf_fil{ifil}"] = np.linalg.norm(dT_dl_N_no_tf, axis=-1).max()
+        metrics[f"min_dT_dl_N_no_tf_fil{ifil}"] = np.linalg.norm(dT_dl_N_no_tf, axis=-1).min()
+        metrics[f"avg_dT_dl_N_no_tf_fil{ifil}"] = np.linalg.norm(dT_dl_N_no_tf, axis=-1).mean()
+        metrics[f"std_dT_dl_N_no_tf_fil{ifil}"] = np.linalg.norm(dT_dl_N_no_tf, axis=-1).std()
+        metrics[f"net_F_N_fil{ifil}"] = np.linalg.norm(net_F_N)
+        metrics[f"net_F_N_no_tf_fil{ifil}"] = np.linalg.norm(net_F_N_no_tf)
+        metrics[f"net_T_Nm_fil{ifil}"] = np.linalg.norm(net_T_Nm)
+        metrics[f"net_T_Nm_no_tf_fil{ifil}"] = np.linalg.norm(net_T_Nm_no_tf)
 
     return metrics
 
@@ -251,7 +380,7 @@ def main(argv=None):
     for ifile, file in enumerate(files):
         print(f"Processing file {ifile+1:{width}}/{nfiles}: {file}", flush=True)
         try:
-            metrics_row = extract_metrics(file)
+            metrics_row = extract_metrics(file, vmec_dir=args.vmec_dir, poincare_dir=args.poincare_dir)
             for key, value in metrics_row.items():
                 if key in metrics:
                     metrics[key].append(value)

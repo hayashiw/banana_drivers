@@ -36,6 +36,8 @@ def build_biotsavart(
     banana_ws_major_radius: float | None = None,
     banana_ws_minor_radius: float | None = None,
     vf_fix_current: bool = True,
+    finitebuild: bool | None = None,
+    regularized: bool | None = None,
 ) -> BiotSavart:
     tf_coils = generate_tf_coils(tf_current_ka, tf_fix_current)
 
@@ -45,6 +47,8 @@ def build_biotsavart(
     if banana_qpts_per_order is not None: banana_kwargs["qpts_per_order"] = banana_qpts_per_order
     if banana_ws_major_radius is not None: banana_kwargs["major_radius"] = banana_ws_major_radius
     if banana_ws_minor_radius is not None: banana_kwargs["minor_radius"] = banana_ws_minor_radius
+    if finitebuild is not None: banana_kwargs["finitebuild"] = finitebuild
+    if regularized is not None: banana_kwargs["regularized"] = regularized
     banana_coils = generate_banana_coils(banana_current_ka, **banana_kwargs)
 
     proxy_coils = generate_proxy_coils(proxy_current_ka, proxy_rz)
@@ -70,6 +74,8 @@ def rebuild_biotsavart(
     proxy_rz : tuple[float, float] | None = None,
     vf_current_ka: float | None = None,
     vf_fix_current: bool | None = None,
+    finitebuild: bool | None = None,
+    regularized: bool | None = None,
 ) -> BiotSavart:
     if isinstance(biotsavart, str):
         biotsavart = load(biotsavart)
@@ -153,5 +159,7 @@ def rebuild_biotsavart(
         banana_ws_major_radius=banana_ws_major_radius,
         banana_ws_minor_radius=banana_ws_minor_radius,
         vf_fix_current=vf_fix_current,
+        finitebuild=finitebuild,
+        regularized=regularized,
     )
 
