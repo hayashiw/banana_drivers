@@ -379,17 +379,13 @@ def main(argv=None):
     outdir = os.path.dirname(os.path.abspath(out_file))
     os.makedirs(outdir, exist_ok=True)
 
-    metrics = {}
+    metrics = []
     print(f"Processing {nfiles} Boozer surface JSON files", flush=True)
     for ifile, file in enumerate(files):
         print(f"Processing file {ifile+1:{width}}/{nfiles}: {file}", flush=True)
         try:
             metrics_row = extract_metrics(file, vmec_dir=args.vmec_dir, poincare_dir=args.poincare_dir)
-            for key, value in metrics_row.items():
-                if key in metrics:
-                    metrics[key].append(value)
-                else:
-                    metrics[key] = [value]
+            metrics.append(metrics_row)
         except Exception as e:
             print(f"Error processing file {file}: {e}", flush=True)
 
