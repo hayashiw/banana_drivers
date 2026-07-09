@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 from simsopt._core import load
 
 from ..utils.plot import plot_modB, plot_Bdotn, plot_cross_sections
-from ..utils.surface import change_surface_range
 from ..hardware import hbt_banana_ws, BANANA_IDX, N_COILS, N_FB_COILS
 from .print_parameters import find_winding_surface
 
@@ -23,7 +22,7 @@ def build_parser():
 def make_plot(boozersurface_file, dpi=150, ws_from_coils=False):
     boozersurface = load(boozersurface_file)
     biotsavart = boozersurface.biotsavart
-    surface = change_surface_range(boozersurface.surface)
+    surface = boozersurface.surface
 
     ncoils = len(biotsavart.coils)
     assert ncoils in [N_COILS, N_FB_COILS], f"Expected number of coils to be {N_COILS} (filament) or {N_FB_COILS} (finite build), but got {ncoils}."

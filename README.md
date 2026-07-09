@@ -17,10 +17,10 @@ For collaborators, the main deliverable is [`candidates/`](#candidates) — no i
 | `<stem>.poincare.png` | Poincaré field-line plot with the target surface overlaid. |
 | `<stem>.coils/coil<i>.csv` | Per-coil geometry: position + tangent + normal + binormal along the curve (one CSV per banana coil). |
 
-**Subdirectories:**
+**Companion files:**
 
 - `candidates/finitebuild/` — same candidates re-expanded to multifilament finite-build coils. Filenames add `_finitebuild` to the biotsavart tag; matching `.modB_Bdotn.png` plots sit alongside.
-- `candidates/metrics_table.csv` — one row per candidate summarizing geometric constraints, B·n, Boozer residual, and Poincaré confinement scores (survival fraction + confinement score).
+- `metrics_table.csv` (repo root) — one row per candidate summarizing geometric constraints, B·n, Boozer residual, and Poincaré confinement scores (survival fraction + confinement score).
 
 ### Filename tags
 

@@ -36,6 +36,7 @@ from ..utils.tags import resolve_boozersurface_json_filename
 from ..utils.biotsavart import rebuild_biotsavart
 from ..utils.metrics import calculate_qs_error, calculate_trace_score
 from ..utils.io import read_poincare_npz
+from ..utils.surface import change_surface_range
 from ..hardware import (
     hbt_banana_fb,
     hbt_banana_ws,
@@ -117,7 +118,8 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
     boozersurface = load(file)
     biotsavart = boozersurface.biotsavart
     surface = boozersurface.surface
-    biotsavart.set_points(surface.gamma().reshape(-1, 3))
+    highres_surface = change_surface_range(surface, surf_range="field period", nphi=129, ntheta=128)
+    biotsavart.set_points(highres_surface.gamma().reshape(-1, 3))
 
     coils = biotsavart.coils
     ncoils = len(coils)
@@ -194,7 +196,7 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
         metrics[f"vf_coil_current_{icoil}_kA"] = current.get_value() / 1e3
         metrics[f"vf_coil_current_{icoil}_fixed"] = (len(current.x) == 0)
 
-    min_coil_plasma_distance = CurveSurfaceDistance(banana_curves, surface, 0.0).shortest_distance()
+    min_coil_plasma_distance = CurveSurfaceDistance(banana_curves, highres_surface, 0.0).shortest_distance()
 
     metrics["surface_tag"] = surface_tag
     metrics["surface_stage"] = surface_stage
@@ -209,15 +211,15 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
     metrics["surface_minor_radius"] = surface.minor_radius()
     metrics["surface_volume"] = surface.volume()
 
-    B = biotsavart.B().reshape(surface.gamma().shape)
+    B = biotsavart.B().reshape(highres_surface.gamma().shape)
     modB = np.linalg.norm(B, axis=-1)
-    Bdotn_norm = np.sum(B * surface.unitnormal(), axis=-1) / modB
+    Bdotn_norm = np.sum(B * highres_surface.unitnormal(), axis=-1) / modB
     metrics["max_Bdotn_norm"] = np.abs(Bdotn_norm).max()
     metrics["min_Bdotn_norm"] = np.abs(Bdotn_norm).min()
     metrics["avg_Bdotn_norm"] = np.abs(Bdotn_norm).mean()
     metrics["std_Bdotn_norm"] = np.abs(Bdotn_norm).std()
 
-    dS = np.linalg.norm(surface.normal(), axis=-1)
+    dS = np.linalg.norm(highres_surface.normal(), axis=-1)
     B_QS = (modB * dS).mean(axis=0) / dS.mean(axis=0)
     B_nonQS = modB - B_QS[None, :]
     nonQS_ratio = np.sqrt(( (B_nonQS**2) * dS ).mean() / ( (B_QS**2) * dS ).mean())
@@ -234,8 +236,8 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
     else:
         iota = state["iota"]
         G = state["G"]
-        r = boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=True, I=boozersurface.I)[0]
-        r = np.linalg.norm(r.reshape(surface.gamma().shape), axis=-1)
+        r = boozer_surface_residual(highres_surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=True, I=boozersurface.I)[0]
+        r = np.linalg.norm(r.reshape(highres_surface.gamma().shape), axis=-1)
         metrics["iota"] = iota
         metrics["G"]    = G
         metrics["max_Boozer_residual"] = r.max()
@@ -293,9 +295,9 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
                     key_err = f"virtualcasing_std_Bdotn_norm_{curredge_str}"
 
                     vc = VirtualCasing.load(vcasing_file)
-                    target = interpolate_target_to_surface(surface, vc)
+                    target = interpolate_target_to_surface(highres_surface, vc)
 
-                    vc_Bdotn_norm = (np.sum(B*surface.unitnormal(), axis=-1) - target) / modB
+                    vc_Bdotn_norm = (np.sum(B*highres_surface.unitnormal(), axis=-1) - target) / modB
                     metrics[key_max] = np.abs(vc_Bdotn_norm).max()
                     metrics[key_min] = np.abs(vc_Bdotn_norm).min()
                     metrics[key_avg] = np.abs(vc_Bdotn_norm).mean()
@@ -366,6 +368,7 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
         metrics[f"net_T_Nm_fil{ifil}"] = np.linalg.norm(net_T_Nm)
         metrics[f"net_T_Nm_no_tf_fil{ifil}"] = np.linalg.norm(net_T_Nm_no_tf)
 
+    metrics["file"] = basename
     return metrics
 
 def main(argv=None):
