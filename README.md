@@ -6,7 +6,7 @@ For collaborators, the main deliverable is [`candidates/`](#candidates) — no i
 
 ## Candidates
 
-`candidates/` is the tracked shortlist of finalized coil sets and their diagnostics. Each candidate is a BoozerSurface JSON plus a set of files that share its basename and hold the visualizations and coil geometry.
+`candidates/` on this branch (`main`) is the filtered shortlist of finalized coil sets and their diagnostics. The full unfiltered pool lives on the [`all-candidates`](../../tree/all-candidates) branch. Each candidate is a BoozerSurface JSON plus a set of files that share its basename and hold the visualizations and coil geometry.
 
 **Per-candidate files** (`<stem>.*`):
 
