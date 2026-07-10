@@ -24,11 +24,20 @@ def build_parser():
     parser.add_argument("--maxiter", type=int, default=DEFAULT_MAXITER, help=f"Maximum number of iterations for the minimization. Default: {DEFAULT_MAXITER}.")
     parser.add_argument("--tol", type=float, default=DEFAULT_TOL, help=f"Tolerance for the minimization. Default: {DEFAULT_TOL}.")
     parser.add_argument("--overwrite", action="store_true", help="If set, allows overwriting existing state files. Default: False.")
+    parser.add_argument("--out-dir", type=str, default=".", help="Directory to save the state file. Default: current directory.")
     return parser
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     boozersurface_file = args.boozersurface_file
+    out_dir = args.out_dir
+
+    basename = os.path.basename(boozersurface_file)
+
+    statefile = os.path.join(out_dir, basename.replace("boozersurface", "state"))
+    if os.path.exists(statefile) and not args.overwrite:
+        print(f"State file {statefile} already exists. Use --overwrite to allow overwriting.", flush=True)
+        return 1
 
     print(f"# Input parameters:", flush=True)
     for key, val in vars(args).items():
@@ -139,13 +148,8 @@ def main(argv=None):
         tf_current_ka = G / (MU0 * len(tf_coils)) / 1e3
         print(f"# Final TF current: {tf_current_ka:.3f} kA", flush=True)
 
-    statefile = os.path.join(os.path.dirname(boozersurface_file), os.path.basename(boozersurface_file).replace("boozersurface", "state"))
     if os.path.exists(statefile):
-        if args.overwrite:
-            print(f"Overwriting state file {statefile}.", flush=True)
-        else:
-            print(f"State file {statefile} already exists. Use --overwrite to allow overwriting.", flush=True)
-            return 1
+        print(f"Overwriting state file {statefile}.", flush=True)
     else:
         print(f"Saving state file {statefile}.", flush=True)
 

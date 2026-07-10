@@ -63,6 +63,7 @@ def build_parser():
     parser.add_argument("--out-file", type=str, default="metrics_table.csv", help="Output CSV file for the metrics table. Default: metrics_table.csv")
     parser.add_argument("--vmec-dir", type=str, default=None, help="Directory containing VMEC netCDF files that include wout, boozmn, and vcasing files. Files are assumed to have the format {wout,boozmn,vcasing}_<boozersurface_filename%.json>.vmec_curredge<current>kA.nc")
     parser.add_argument("--poincare-dir", type=str, default=None, help="Directory containing Poincare trace .npz files that have the format <boozersurface_filename%.json>.npz")
+    parser.add_argument("--bres-min-iotas-dir", type=str, default=None, help="Directory containing JSON state files calculated using find_iota_basin.py which contain the fixed-surface Boozer-residual-minimizing iotas.")
     return parser
 
 def refit_filament(filament, n_fourier=48):
@@ -72,7 +73,7 @@ def refit_filament(filament, n_fourier=48):
     new.least_squares_fit(xyz)
     return new
 
-def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
+def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None, bres_min_iotas_dir=None):
     file = os.path.abspath(boozersurface_file)
     dirname = os.path.dirname(file)
     basename = os.path.basename(file)
@@ -225,29 +226,56 @@ def extract_metrics(boozersurface_file, vmec_dir=None, poincare_dir=None):
     nonQS_ratio = np.sqrt(( (B_nonQS**2) * dS ).mean() / ( (B_QS**2) * dS ).mean())
     metrics["nonQS_ratio"] = nonQS_ratio
 
+    if bres_min_iotas_dir:
+        approx_statefile = os.path.join(bres_min_iotas_dir, basename.replace("boozersurface", "state"))
+        missing_approx_state = not os.path.exists(approx_statefile)
+        if missing_approx_state:
+            warnings.warn(f"Approximate iota state file not found: {approx_statefile}")
+        else:
+            with open(approx_statefile, "r") as f:
+                approx_state = json.load(f)
+            approx_iota = approx_state["iota"]
+            approx_G = approx_state["G"]
+
     if missing_state:
-        metrics["iota"] = None
-        metrics["G"]    = None
-        metrics["max_Boozer_residual"] = None
-        metrics["min_Boozer_residual"] = None
-        metrics["avg_Boozer_residual"] = None
-        metrics["std_Boozer_residual"] = None
-        metrics["QS_error"] = None
+        if (not bres_min_iotas_dir) or missing_approx_state:
+            metrics["iota"] = None
+            metrics["G"]    = None
+            metrics["max_Boozer_residual"] = None
+            metrics["min_Boozer_residual"] = None
+            metrics["avg_Boozer_residual"] = None
+            metrics["std_Boozer_residual"] = None
+        else:
+            r = boozer_surface_residual(highres_surface, approx_iota, approx_G, biotsavart, derivatives=0, weight_inv_modB=True, I=boozersurface.I)[0]
+            r = np.linalg.norm(r.reshape(highres_surface.gamma().shape), axis=-1)
+            metrics["iota"] = None
+            metrics["Boozer_residual_minimizing_iota"] = approx_iota
+            metrics["G"] = None
+            metrics["Boozer_residual_minimizing_G"] = approx_G
+            metrics["max_Boozer_residual"] = r.max()
+            metrics["min_Boozer_residual"] = r.min()
+            metrics["avg_Boozer_residual"] = r.mean()
+            metrics["std_Boozer_residual"] = r.std()
     else:
         iota = state["iota"]
         G = state["G"]
         r = boozer_surface_residual(highres_surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=True, I=boozersurface.I)[0]
         r = np.linalg.norm(r.reshape(highres_surface.gamma().shape), axis=-1)
         metrics["iota"] = iota
+        if bres_min_iotas_dir and not missing_approx_state:
+            metrics["Boozer_residual_minimizing_iota"] = approx_iota
         metrics["G"]    = G
+        if bres_min_iotas_dir and not missing_approx_state:
+            metrics["Boozer_residual_minimizing_G"] = approx_G
         metrics["max_Boozer_residual"] = r.max()
         metrics["min_Boozer_residual"] = r.min()
         metrics["avg_Boozer_residual"] = r.mean()
         metrics["std_Boozer_residual"] = r.std()
 
-        # Note that this is dependent on the Boozer residual being sufficiently small
-        # such that the surface quadpoints represent the Boozer angular coordinates.
-        metrics["QS_error"] = calculate_qs_error(boozersurface)
+    # Note that this is dependent on the Boozer residual being sufficiently small
+    # such that the surface quadpoints represent the Boozer angular coordinates.
+    # We'll calculate it for all Boozer surfaces anyways.
+    metrics["QS_error"] = calculate_qs_error(boozersurface)
 
     metrics["constraint_weight"] = boozersurface.constraint_weight
     label = boozersurface.label
@@ -387,7 +415,7 @@ def main(argv=None):
     for ifile, file in enumerate(files):
         print(f"Processing file {ifile+1:{width}}/{nfiles}: {file}", flush=True)
         try:
-            metrics_row = extract_metrics(file, vmec_dir=args.vmec_dir, poincare_dir=args.poincare_dir)
+            metrics_row = extract_metrics(file, vmec_dir=args.vmec_dir, poincare_dir=args.poincare_dir, bres_min_iotas_dir=args.bres_min_iotas_dir)
             metrics.append(metrics_row)
         except Exception as e:
             print(f"Error processing file {file}: {e}", flush=True)
